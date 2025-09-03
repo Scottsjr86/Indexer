@@ -223,6 +223,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "ignore",
+ "memchr",
  "serde",
  "serde_json",
  "sha1",

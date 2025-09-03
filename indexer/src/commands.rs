@@ -1,27 +1,9 @@
 // indexer/src/commands.rs
 
-use anyhow::{
-    Result, 
-    Context, 
-    anyhow
-};
-use std::{
-    env, 
-    fs, 
-    path::{
-        Path, 
-        PathBuf
-    }
-};
-use crate::{
-    scan, 
-    diff, 
-    util, 
-    tree_view, 
-    map_view, 
-    chunker
-};
+use anyhow::{anyhow, Context, Result};
+use std::{env, fs, path::{Path, PathBuf}};
 
+use crate::{chunker, diff, map_view, scan, tree_view, util};
 
 pub fn run_cli() -> Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -42,24 +24,33 @@ pub fn run_cli() -> Result<()> {
 /// Resolve all standard output paths under .gpt_index for the current working dir.
 fn resolve_paths() -> Result<ResolvedPaths> {
     let cwd = std::env::current_dir().context("failed to get current_dir")?;
-    let dir_name = util::get_dir_name().context("failed to infer project dir name")?;
+    let dir_name = util::workdir_slug(); // <— use your slug
 
-    let index_dir  = cwd.join(".gpt_index");
-    let maps_dir   = index_dir.join("maps");
-    let trees_dir  = index_dir.join("trees");
-    let chunks_dir = index_dir.join("chunks");
-    let indexes_dir= index_dir.join("indexes");
+    let index_dir    = cwd.join(".gpt_index");
+    let maps_dir     = index_dir.join("maps");
+    let trees_dir    = index_dir.join("trees");
+    let chunks_dir   = index_dir.join("chunks");
+    let indexes_dir  = index_dir.join("indexes");
     let history_full = index_dir.join("history/full");
-    let history_diffs= index_dir.join("history/diffs");
+    let history_diff = index_dir.join("history/diffs");
 
     // Ensure structure exists (idempotent)
-    for d in [&index_dir, &maps_dir, &trees_dir, &chunks_dir, &indexes_dir, &history_full, &history_diffs] {
+    for d in [&index_dir, &maps_dir, &trees_dir, &chunks_dir, &indexes_dir, &history_full, &history_diff] {
         fs::create_dir_all(d).with_context(|| format!("creating {}", d.display()))?;
     }
 
-    let index_file = indexes_dir.join(format!("{}.jsonl", dir_name));
+    let index_file = indexes_dir.join(format!("{dir_name}.jsonl"));
     Ok(ResolvedPaths {
-        cwd, dir_name, index_dir, maps_dir, trees_dir, chunks_dir, indexes_dir, history_full, history_diffs, index_file
+        cwd,
+        dir_name,
+        index_dir,
+        maps_dir,
+        trees_dir,
+        chunks_dir,
+        indexes_dir,
+        history_full,
+        history_diff,
+        index_file,
     })
 }
 
@@ -74,7 +65,7 @@ struct ResolvedPaths {
     #[allow(dead_code)]
     indexes_dir: PathBuf,
     history_full: PathBuf,
-    history_diffs: PathBuf,
+    history_diff: PathBuf,
     index_file: PathBuf,
 }
 
@@ -93,11 +84,10 @@ fn index_root(is_reindex: bool) -> Result<()> {
         let new_entries = scan::scan_and_write_index(&p.cwd, &p.index_file)
             .context("reindex scan/write failed")?;
         let diff_val = diff::diff_indexes(&old_entries, &new_entries);
-        let diff_path = p.history_diffs.join(format!("{}_{}.json", p.dir_name, ts));
+        let diff_path = p.history_diff.join(format!("{}_{}.json", p.dir_name, ts));
         let mut f = fs::File::create(&diff_path)
             .with_context(|| format!("creating {}", diff_path.display()))?;
-        serde_json::to_writer_pretty(&mut f, &diff_val)
-            .context("writing diff json")?;
+        serde_json::to_writer_pretty(&mut f, &diff_val).context("writing diff json")?;
         println!("Index updated. Diff written to {}.", diff_path.display());
     } else {
         scan::scan_and_write_index(&p.cwd, &p.index_file)
@@ -105,10 +95,14 @@ fn index_root(is_reindex: bool) -> Result<()> {
         println!("Initial index complete: {}", p.index_file.display());
     }
 
-    // FULL AUTO: Tree, Map, Chunk (as promised in README)
-    let out_tree = p.trees_dir.join("PROJECT_TREE.md");
-    let out_map  = p.maps_dir.join("PROJECT_MAP.md");
-    let out_prefix = p.chunks_dir.join("paste_");
+    // FULL AUTO: Tree, Map, Chunk
+    let tree_name = util::prefixed_filename("PROJECT_TREE", "md");
+    let map_name  = util::prefixed_filename("PROJECT_MAP", "md");
+    let out_tree  = p.trees_dir.join(tree_name);
+    let out_map   = p.maps_dir.join(map_name);
+
+    // paste prefix: <slug>_paste_
+    let out_prefix = p.chunks_dir.join(format!("{}_paste_", p.dir_name));
 
     tree_view::build_tree_from_index(&p.index_file, &out_tree)
         .with_context(|| format!("writing {}", out_tree.display()))?;
@@ -118,7 +112,9 @@ fn index_root(is_reindex: bool) -> Result<()> {
         .with_context(|| format!("writing {}", out_map.display()))?;
     println!("Map view written to {}", out_map.display());
 
-    let out_prefix_str = out_prefix.to_str().ok_or_else(|| anyhow!("non-utf8 path: {}", out_prefix.display()))?;
+    let out_prefix_str = out_prefix
+        .to_str()
+        .ok_or_else(|| anyhow!("non-utf8 path: {}", out_prefix.display()))?;
     chunker::chunk_index_for_gpt(&p.index_file, out_prefix_str, 15_000)
         .context("chunking index")?;
     println!("Paste chunks written to {}", p.chunks_dir.display());
@@ -127,13 +123,13 @@ fn index_root(is_reindex: bool) -> Result<()> {
 
 fn index_subdir() -> Result<()> {
     let cwd = std::env::current_dir().context("get current_dir")?;
-    let sub_name = util::get_dir_name().context("infer subdir name")?;
+    let sub_name = util::workdir_slug(); // <— slug current subdir
     let index_dir = cwd.join(".sub_index");
     let indexes_dir = index_dir.join("indexes");
     fs::create_dir_all(indexes_dir.join("history"))
         .with_context(|| format!("creating {}", indexes_dir.display()))?;
 
-    let index_file = indexes_dir.join(format!("{}.jsonl", sub_name));
+    let index_file = indexes_dir.join(format!("{sub_name}.jsonl"));
     if index_file.exists() {
         let ts = util::now_ts_compact();
         let backup_path = indexes_dir.join(format!("history/{}_{}.jsonl", sub_name, ts));
@@ -150,7 +146,7 @@ fn index_subdir() -> Result<()> {
 fn generate_tree() -> Result<()> {
     let p = resolve_paths()?;
     ensure_index_exists(&p.index_file)?;
-    let out_path = p.trees_dir.join("PROJECT_TREE.md");
+    let out_path = p.trees_dir.join(util::prefixed_filename("PROJECT_TREE", "md"));
     tree_view::build_tree_from_index(&p.index_file, &out_path)
         .with_context(|| format!("writing {}", out_path.display()))?;
     println!("Tree view written to {}", out_path.display());
@@ -160,7 +156,7 @@ fn generate_tree() -> Result<()> {
 fn generate_map() -> Result<()> {
     let p = resolve_paths()?;
     ensure_index_exists(&p.index_file)?;
-    let out_path = p.maps_dir.join("PROJECT_MAP.md");
+    let out_path = p.maps_dir.join(util::prefixed_filename("PROJECT_MAP", "md"));
     map_view::build_map_from_index(&p.index_file, &out_path)
         .with_context(|| format!("writing {}", out_path.display()))?;
     println!("Map view written to {}", out_path.display());
@@ -171,8 +167,12 @@ fn generate_map() -> Result<()> {
 fn chunk_index(arg: Option<&str>) -> Result<()> {
     let p = resolve_paths()?;
     ensure_index_exists(&p.index_file)?;
-    let out_prefix = p.chunks_dir.join("paste_");
-    let out_prefix_str = out_prefix.to_str().ok_or_else(|| anyhow!("non-utf8 path: {}", out_prefix.display()))?;
+
+    // paste prefix: <slug>_paste_
+    let out_prefix = p.chunks_dir.join(format!("{}_paste_", p.dir_name));
+    let out_prefix_str = out_prefix
+        .to_str()
+        .ok_or_else(|| anyhow!("non-utf8 path: {}", out_prefix.display()))?;
 
     let cap = parse_cap(arg).unwrap_or(15_000);
     chunker::chunk_index_for_gpt(&p.index_file, out_prefix_str, cap)
@@ -183,8 +183,7 @@ fn chunk_index(arg: Option<&str>) -> Result<()> {
 
 fn parse_cap(arg: Option<&str>) -> Option<usize> {
     let a = arg?;
-    let s = a.trim();
-    if let Some(rest) = s.strip_prefix("--cap=") {
+    if let Some(rest) = a.trim().strip_prefix("--cap=") {
         return rest.parse::<usize>().ok();
     }
     None
@@ -204,15 +203,30 @@ r#"
 Forge Indexer Godmode CLI
 
 USAGE:
-    indexer init          # Index the current dir, create .gpt_index/indexes/PROJECT.jsonl
-    indexer reindex       # Re-index, archive last, diff, write fresh index
-    indexer sub           # Index just this subdir (creates .sub_index/indexes/SUBDIR.jsonl)
-    indexer tree          # Build trees/PROJECT_TREE.md (dir tree, inline summaries)
-    indexer map           # Build maps/PROJECT_MAP.md (flat manifest, with summaries)
-    indexer chunk [--cap=N]
-                          # Split index into chunks/paste-ready markdown files (by token cap)
-    indexer help          # Show this message
+    indexer init
+        # Index the current dir, write .gpt_index/indexes/<slug>.jsonl
+        # Then emit:
+        #   .gpt_index/trees/<slug>_PROJECT_TREE.md
+        #   .gpt_index/maps/<slug>_PROJECT_MAP.md
+        #   .gpt_index/chunks/<slug>_paste_1.md (and _2, ...)
 
-All output written to .gpt_index/ and subfolders (or .sub_index/ for subdirs).
+    indexer reindex
+        # Re-index, archive last snapshot to .gpt_index/history/full/<slug>_<ts>.jsonl
+        # Write diff to .gpt_index/history/diffs/<slug>_<ts>.json
+
+    indexer sub
+        # Index just this subdir: .sub_index/indexes/<slug>.jsonl
+
+    indexer tree
+        # Rebuild trees/<slug>_PROJECT_TREE.md
+
+    indexer map
+        # Rebuild maps/<slug>_PROJECT_MAP.md
+
+    indexer chunk [--cap=N]
+        # Split index into chunks/<slug>_paste_*.md files (by token cap)
+
+    indexer help
+        # Show this message
 "#    );
 }

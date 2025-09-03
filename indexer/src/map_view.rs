@@ -1,32 +1,22 @@
 // indexer/src/map_view.rs
 
 use std::{
-    collections::{
-        BTreeMap, 
-        BTreeSet
-    },
-    fs::{self, 
-        File
-    },
-    io::{
-        BufRead, 
-        BufReader, 
-        Write
-    },
-    path::{
-        Path, 
-        PathBuf
-    },
+    collections::{BTreeMap, BTreeSet},
+    fs::{self, File},
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
 };
+
 use crate::{
-    file_intent_entry::FileIntentEntry
+    file_intent_entry::FileIntentEntry,
+    util::workdir_slug,
 };
 
 /// Build a hierarchical, skim-friendly project map from a JSONL index.
-/// - Groups by top-level directory
-/// - Summaries are clamped to a single tight line
-/// - Per-directory caps (with "+N more…" footer) keep output readable
-/// - Skips obvious noise directories (configurable below)
+/// Purpose (distinct from TREE):
+///   - High-level catalog by *top-level* directory
+///   - Single-line summaries, per-group tag rollups
+///   - Listing caps keep output skimmable; suggest TREE for full structure
 pub fn build_map_from_index(index_path: &Path, output_path: &Path) -> std::io::Result<()> {
     // Ensure parent dir exists
     if let Some(parent) = output_path.parent() {
@@ -43,15 +33,21 @@ pub fn build_map_from_index(index_path: &Path, output_path: &Path) -> std::io::R
     let mut groups: BTreeMap<String, Vec<EntryLite>> = BTreeMap::new();
     let mut all_tags: BTreeMap<String, usize> = BTreeMap::new();
     let mut total = 0usize;
-    #[allow(unused_variables)]
+
     for (i, line) in rdr.lines().enumerate() {
         let line = match line {
             Ok(l) => l,
-            Err(_) => continue, // skip bad read
+            Err(e) => {
+                eprintln!("[map] warn: read error on line {}: {}", i + 1, e);
+                continue;
+            }
         };
         let entry: FileIntentEntry = match serde_json::from_str(&line) {
             Ok(e) => e,
-            Err(_) => continue, // skip malformed JSONL line
+            Err(e) => {
+                eprintln!("[map] warn: bad JSONL at line {}: {}", i + 1, e);
+                continue;
+            }
         };
         total += 1;
 
@@ -81,8 +77,13 @@ pub fn build_map_from_index(index_path: &Path, output_path: &Path) -> std::io::R
 
     // ===== Emit =====
     let mut out = File::create(output_path)?;
+
+    let project = workdir_slug();
     let (rollup_line, tag_count) = top_k_tags(&all_tags, 12);
-    writeln!(out, "# Project File Map\n")?;
+
+    writeln!(out, "# {} Project Map\n", project)?;
+    writeln!(out, "_Legend: grouped by top-level dir • each line = `rel/path [lang] — summary` • tags shown when present_\n")?;
+
     writeln!(
         out,
         "> Files: {}  •  Groups: {}  •  Tag varieties: {}",
@@ -96,24 +97,26 @@ pub fn build_map_from_index(index_path: &Path, output_path: &Path) -> std::io::R
         writeln!(out)?;
     }
 
-    // Noise groups (don’t spam output). Add/remove to taste.
+    // Noise groups (don’t spam output). Adjust to taste.
     let noise_groups: BTreeSet<&'static str> = [
         "target", "node_modules", ".git", ".github", ".idea", ".vscode",
         ".cargo", ".venv", "venv", "dist", "build", "out",
     ].into_iter().collect();
 
-    // Per-group listing cap
+    // Per-group listing cap (map is a catalog, not exhaustive)
     const LIST_CAP: usize = 120;
 
     for (group, entries) in groups {
         if noise_groups.contains(group.as_str()) {
-            // Skip noisy infra entirely; uncomment if you want a collapsed line instead.
-            // writeln!(out, "## `{}/` (skipped noisy infra, {} files)\n", group, entries.len())?;
+            // Skip noisy infra entirely; uncomment to show a collapsed line instead:
+            // writeln!(out, "## `{}/` _(skipped noisy infra, {} files)_\n", group, entries.len())?;
             continue;
         }
-        writeln!(out, "## `{}/`  _(files: {})_\n", group, entries.len())?;
 
-        // Optional sub‑section tag rollup per group
+        let display_group = if group == "." { "(root)".to_string() } else { format!("{}/", group) };
+        writeln!(out, "## `{}`  _(files: {})_\n", display_group, entries.len())?;
+
+        // Optional sub-section tag rollup per group
         let mut gtags: BTreeMap<String, usize> = BTreeMap::new();
         for e in &entries {
             for t in &e.tags {
@@ -144,8 +147,12 @@ pub fn build_map_from_index(index_path: &Path, output_path: &Path) -> std::io::R
         }
 
         if shown < entries.len() {
-            writeln!(out, "\n_… {} more in `{}/` (use tree view or open the index for full list)_\n",
-                entries.len() - shown, group)?;
+            writeln!(
+                out,
+                "\n_… {} more in `{}` (use Tree view or open the index for full list)_\n",
+                entries.len() - shown,
+                display_group
+            )?;
         } else {
             writeln!(out)?;
         }
@@ -164,6 +171,8 @@ struct EntryLite {
     tags: Vec<String>,
 }
 
+/// Return (top_level_dir, remainder_relative_path).
+/// For paths with no '/', group = "." and rel="filename" (or ".").
 fn split_top(path: &str) -> (String, String) {
     let pb = PathBuf::from(path);
     let mut comps = pb.components();
@@ -190,13 +199,17 @@ fn clamp_summary(s: &str) -> String {
 fn truncate_ellipsis(s: &str, max: usize) -> String {
     if s.len() <= max { return s.to_string(); }
     let mut out = s[..max].to_string();
-    out.push_str("…");
+    out.push('…');
     out
 }
 
 fn top_k_tags(freq: &BTreeMap<String, usize>, k: usize) -> (String, usize) {
     let mut v: Vec<(&str, usize)> = freq.iter().map(|(k, v)| (k.as_str(), *v)).collect();
     v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
-    let shown = v.iter().take(k).map(|(t, n)| format!("`{}`({})", t, n)).collect::<Vec<_>>().join(", ");
+    let shown = v.iter()
+        .take(k)
+        .map(|(t, n)| format!("`{}`({})", t, n))
+        .collect::<Vec<_>>()
+        .join(", ");
     (shown, freq.len())
 }
