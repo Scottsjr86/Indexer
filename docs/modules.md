@@ -36,14 +36,14 @@ Why now: uses intents + scan; independent of chunk text.
 Model-optimized prompt pack: SYSTEM_INSTRUCTIONS, GLOBAL_CONTEXT, CHUNKS, QUERY_PLAYBOOK; writes <slug>_PASTE.md.
 Why now: consumes chunks + map; needs the earlier pieces rock solid.
 
-## commands.rs 
+## commands.rs ✅ Done
 CLI subcommands wired to the new emitters (init, tree, map, paste, optionally index).
 Why now: finally glue everything into user-facing commands.
 
-## main.rs 
+## main.rs ✅ Done
 Clap (or Argp) CLI parser, logging initialization, error handling policy, exit codes.
 Why now: last mile, minimal churn.
 
-## Cargo.toml 
+## Cargo.toml ✅ Done
 Features, bins, profile settings, dependency tightening, build scripts if needed.
 Why last: wire up features discovered during refactors, pin versions, enable LTO, panic=abort for release, etc.
