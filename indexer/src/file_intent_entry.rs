@@ -7,39 +7,45 @@
 //!
 //! Zero extra deps beyond `serde`.
 
-use serde::{Deserialize, Serialize};
-use std::{fmt, hash::{Hash,}};
+use serde::{
+    de::{
+        self,         
+        Visitor,
+        Error as DeError,        
+        Deserializer,
+    }, 
+};
+use std::fmt;
 
 /// Coarse role for retrieval/ranking. Keep small & stable.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Role {
-    #[serde(alias = "bin")]     Bin,
-    #[serde(alias = "lib")]     Lib,
-    #[serde(alias = "test")]    Test,
-    #[serde(alias = "doc")]     Doc,
-    #[serde(alias = "config")]  Config,
-    #[serde(alias = "script")]  Script,
-    #[serde(alias = "ui")]      Ui,
-    #[serde(alias = "core")]    Core,
-    #[serde(other)]             Other,
+    Bin, Lib, Test, Doc, Config, Script, Ui, Core, Other,
 }
 
 impl Role {
     pub fn from_str_ic<S: AsRef<str>>(s: S) -> Self {
         match s.as_ref().to_ascii_lowercase().as_str() {
-            "bin"     => Role::Bin,
-            "lib"     => Role::Lib,
-            "test"    => Role::Test,
-            "doc"     => Role::Doc,
-            "config"  => Role::Config,
-            "script"  => Role::Script,
-            "ui"      => Role::Ui,
-            "core"    => Role::Core,
-            _         => Role::Other,
+            "bin"    => Role::Bin,
+            "lib"    => Role::Lib,
+            "test"   => Role::Test,
+            "doc"    => Role::Doc,
+            "config" => Role::Config,
+            "script" => Role::Script,
+            "ui"     => Role::Ui,
+            "core"   => Role::Core,
+            _        => Role::Other,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Bin => "bin", Role::Lib => "lib", Role::Test => "test",
+            Role::Doc => "doc", Role::Config => "config", Role::Script => "script",
+            Role::Ui => "ui", Role::Core => "core", Role::Other => "other",
         }
     }
 }
+
 
 impl From<String> for Role {
     fn from(s: String) -> Self { Role::from_str_ic(&s) }
@@ -64,34 +70,27 @@ impl fmt::Display for Role {
 }
 
 /// Primary record emitted per file. This is your JSONL unit.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct FileIntentEntry {
-    // --- existing core fields ---
-    pub path: String,
-    pub lang: String,
-    pub sha1: String,
-    pub size: usize,              // bytes
-    pub last_modified: String,    // unix secs or rfc3339; we print, not parse
-    pub snippet: String,          // source excerpt (may be trimmed)
-    pub tags: Vec<String>,        // structural + heuristic tags
-    pub summary: Option<String>,  // short, high-signal description
-    pub token_estimate: usize,    // rough token count for snippet
+    #[serde(deserialize_with = "de_string_from_any")] pub path: String,
+    #[serde(deserialize_with = "de_string_from_any")] pub lang: String,
+    #[serde(deserialize_with = "de_string_from_any")] pub sha1: String,
+    pub size: usize,
+    #[serde(deserialize_with = "de_string_from_any")] pub last_modified: String,
+    #[serde(deserialize_with = "de_string_from_any")] pub snippet: String,
+    #[serde(deserialize_with = "de_vec_string_from_any")] pub tags: Vec<String>,
+    #[serde(default, deserialize_with = "de_opt_string_from_any")] pub summary: Option<String>,
+    pub token_estimate: usize,
 
-    // --- enriched signals for LLMs ---
-    pub role: Role,               // typed (enum) but deserializes from legacy strings
-    /// Best-effort module path (lang-aware), e.g. `scan`, `foo::bar`, or `pkg.module`
-    pub module: String,
-    /// Cheap import edges (regex-free skim)
-    pub imports: Vec<String>,
-    /// Cheap public surface (fn/struct/trait/def/class)
-    pub exports: Vec<String>,
-    /// Line counts for quick size/churn heuristics
+    // enrichment
+    #[serde(deserialize_with = "de_string_from_any")] pub role: String,
+    #[serde(deserialize_with = "de_string_from_any")] pub module: String,
+    #[serde(deserialize_with = "de_vec_string_from_any")] pub imports: Vec<String>,
+    #[serde(deserialize_with = "de_vec_string_from_any")] pub exports: Vec<String>,
     pub lines_total: usize,
     pub lines_nonblank: usize,
-    /// Top-level directory (e.g., "src")
-    pub rel_dir: String,
-    /// True if file lives in noisy infra dirs
+    #[serde(deserialize_with = "de_string_from_any")] pub rel_dir: String,
     pub noise: bool,
 }
 
@@ -108,7 +107,7 @@ impl Default for FileIntentEntry {
             summary: None,
             token_estimate: 0,
 
-            role: Role::Other,
+            role: String::new(),
             module: String::new(),
             imports: Vec::new(),
             exports: Vec::new(),
@@ -118,6 +117,147 @@ impl Default for FileIntentEntry {
             noise: false,
         }
     }
+}
+
+impl FileIntentEntry {
+    pub fn role_enum(&self) -> Role {
+        Role::from_str_ic(&self.role)
+    }
+    pub fn set_role_enum(&mut self, r: Role) {
+        self.role = r.as_str().to_string();
+    }
+}
+
+// --------- lenient deserializer(s) ---------
+
+// Accept string OR number -> String
+pub fn de_string_from_any<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = String;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a stringable value")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: de::Error {
+            Ok(v.to_owned())
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: de::Error {
+            Ok(v)
+        }
+        fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E> where E: de::Error {
+            Ok(v.to_owned())
+        }
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> where E: de::Error {
+            Ok(v.to_string())
+        }
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> where E: de::Error {
+            Ok(v.to_string())
+        }
+        fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> where E: de::Error {
+            // Avoid scientific notation weirdness
+            Ok(if v.fract() == 0.0 { (v as i64).to_string() } else { v.to_string() })
+        }
+        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> where E: de::Error {
+            Ok(v.to_string())
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E> where E: de::Error {
+            Ok(String::new())
+        }
+        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E> where E: de::Error {
+            match std::str::from_utf8(v) {
+                Ok(s) => Ok(s.to_owned()),
+                Err(_) => Ok(hex::encode(v)), // fallback
+            }
+        }
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            // Join simple seq into a single string
+            let mut out = String::new();
+            let mut first = true;
+            while let Some(serde_json::Value::String(s)) = seq.next_element()? {
+                if !first { out.push_str(","); }
+                first = false;
+                out.push_str(&s);
+            }
+            if out.is_empty() {
+                Err(DeError::invalid_type(de::Unexpected::Seq, &"string or scalar"))
+            } else {
+                Ok(out)
+            }
+        }
+    }
+    d.deserialize_any(V)
+}
+
+pub fn de_opt_string_from_any<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // NOTE: This avoids E0282 by making the error type concrete
+    struct OptV;
+    impl<'de> Visitor<'de> for OptV {
+        type Value = Option<String>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("an optional stringable value")
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E> where E: de::Error { Ok(None) }
+        fn visit_none<E>(self) -> Result<Self::Value, E> where E: de::Error { Ok(None) }
+        fn visit_some<D2>(self, d2: D2) -> Result<Self::Value, D2::Error>
+        where D2: Deserializer<'de>
+        {
+            de_string_from_any(d2).map(Some)
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: de::Error {
+            Ok(Some(v.to_owned()))
+        }
+    }
+    d.deserialize_option(OptV)
+}
+
+pub fn de_vec_string_from_any<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Vec<String>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a string or array of strings/scalars")
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: de::Error {
+            Ok(vec![v.to_owned()])
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: de::Error {
+            Ok(vec![v])
+        }
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut out = Vec::new();
+            while let Some(val) = seq.next_element::<serde_json::Value>()? {
+                match val {
+                    serde_json::Value::String(s) => out.push(s),
+                    serde_json::Value::Number(n) => out.push(n.to_string()),
+                    serde_json::Value::Bool(b)   => out.push(b.to_string()),
+                    serde_json::Value::Null      => {}, // skip
+                    other => out.push(other.to_string()),
+                }
+            }
+            Ok(out)
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E> where E: de::Error {
+            Ok(Vec::new())
+        }
+    }
+    d.deserialize_any(V)
 }
 
 /* ============================== Convenience API ============================== */
@@ -147,7 +287,7 @@ impl FileIntentEntry {
     /// Quick role inference from existing tags/path when role == Other.
     /// Idempotent: only sets when currently Other.
     pub fn backfill_role(&mut self) {
-        if self.role != Role::Other {
+        if self.role_enum() != Role::Other {
             return;
         }
         let pl = self.path.to_ascii_lowercase();
@@ -168,7 +308,7 @@ impl FileIntentEntry {
         } else {
             Role::Other
         };
-        self.role = guess;
+        self.role = guess.to_string();
     }
 
     /// Cheap line metrics (nonblank + total). No allocation beyond iterators.
@@ -218,10 +358,10 @@ mod tests {
     #[test]
     fn default_is_sane() {
         let f = FileIntentEntry::default();
-        assert_eq!(f.role, Role::Other);
+        assert_eq!(f.role_enum(), Role::Other);    // <- was: f.role == Role::Other (wrong)
         assert_eq!(f.token_estimate, 0);
         assert!(f.tags.is_empty());
-    }
+}
 
     #[test]
     fn stable_id_uses_path_and_sha_prefix() {
@@ -239,7 +379,7 @@ mod tests {
             ..Default::default()
         };
         f.backfill_role();
-        assert_eq!(f.role, Role::Bin);
+        assert_eq!(f.role_enum(), Role::Bin);      // <- compare enum via helper
 
         let mut g = FileIntentEntry {
             path: "docs/guide.md".into(),
@@ -247,7 +387,7 @@ mod tests {
             ..Default::default()
         };
         g.backfill_role();
-        assert_eq!(g.role, Role::Doc);
+        assert_eq!(g.role_enum(), Role::Doc);
     }
 
     #[test]

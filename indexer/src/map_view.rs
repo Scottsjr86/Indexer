@@ -1,4 +1,9 @@
-// indexer/src/map_view.rs
+//! Combined Project Map (with tree-lite appendix)
+//!
+//! - Top section: tag-rich grouped catalog by top-level dir (old MAP).
+//! - Appendix: compact hierarchical tree (old TREE), same output file.
+//!
+//! Output path example: `.gpt_index/maps/<slug>_PROJECT_MAP.md`
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -7,209 +12,310 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    file_intent_entry::FileIntentEntry,
-    util::workdir_slug,
-};
+use crate::file_intent_entry::FileIntentEntry;
+use crate::util;
 
-/// Build a hierarchical, skim-friendly project map from a JSONL index.
-/// Purpose (distinct from TREE):
-///   - High-level catalog by *top-level* directory
-///   - Single-line summaries, per-group tag rollups
-///   - Listing caps keep output skimmable; suggest TREE for full structure
+/// Public entrypoint: build the combined MAP (+ tree-lite) into `output_path`.
 pub fn build_map_from_index(index_path: &Path, output_path: &Path) -> std::io::Result<()> {
     // Ensure parent dir exists
     if let Some(parent) = output_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+        fs::create_dir_all(parent)?;
     }
 
-    // ===== Ingest (streaming) =====
-    let f = File::open(index_path)?;
-    let rdr = BufReader::new(f);
+    let entries = load_entries(index_path)?;
 
-    // Group by top-level directory
+    // ---- GROUPED (MAP) ----
     let mut groups: BTreeMap<String, Vec<EntryLite>> = BTreeMap::new();
-    let mut all_tags: BTreeMap<String, usize> = BTreeMap::new();
-    let mut total = 0usize;
+    let mut tag_freq_global: BTreeMap<String, usize> = BTreeMap::new();
 
-    for (i, line) in rdr.lines().enumerate() {
-        let line = match line {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("[map] warn: read error on line {}: {}", i + 1, e);
-                continue;
-            }
-        };
-        let entry: FileIntentEntry = match serde_json::from_str(&line) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("[map] warn: bad JSONL at line {}: {}", i + 1, e);
-                continue;
-            }
-        };
-        total += 1;
-
-        let path_str = entry.path.clone();
-        let (group, rel) = split_top(&path_str);
-        let mut tags = entry.tags.clone();
-        tags.sort();
-        tags.dedup();
-
-        // record tag freqs for header rollup
+    for e in &entries {
+        let (group, rel) = split_top(&e.path);
+        let tags = normalize_tags(&e.tags);
         for t in &tags {
-            *all_tags.entry(t.to_string()).or_insert(0) += 1;
+            *tag_freq_global.entry(t.clone()).or_insert(0) += 1;
         }
-
-        let sum = clamp_summary(entry.summary.as_deref().unwrap_or_default());
-
-        groups
-            .entry(group)
-            .or_default()
-            .push(EntryLite { path: rel, lang: entry.lang, summary: sum, tags });
+        groups.entry(group).or_default().push(EntryLite {
+            path: rel,
+            lang: e.lang.clone(),
+            summary: clamp_summary(e.summary.as_deref().unwrap_or("")),
+            tags,
+        });
     }
 
-    // Sort each group deterministically
-    for v in groups.values_mut() {
-        v.sort_by(|a, b| a.path.cmp(&b.path));
-    }
+    // Compute global counts
+    let files_total = entries.len();
+    let groups_total = groups.len();
+    let tag_k = top_k_tags(&tag_freq_global, 14); // present up to 14 tag buckets
 
-    // ===== Emit =====
+    // ---- TREE-LITE (build a directory tree) ----
+    let dir_tree = build_tree(&entries);
+
+    // ---- Render combined doc ----
     let mut out = File::create(output_path)?;
-
-    let project = workdir_slug();
-    let (rollup_line, tag_count) = top_k_tags(&all_tags, 12);
-
-    writeln!(out, "# {} Project Map\n", project)?;
-    writeln!(out, "_Legend: grouped by top-level dir • each line = `rel/path [lang] — summary` • tags shown when present_\n")?;
-
+    writeln!(out, "# indexer Project Map (combined)")?;
+    writeln!(out)?;
+    writeln!(
+        out,
+        "_Legend: grouped by top-level dir • each line = `rel/path [lang] — summary` • tags shown when present_"
+    )?;
+    writeln!(out)?;
     writeln!(
         out,
         "> Files: {}  •  Groups: {}  •  Tag varieties: {}",
-        total,
-        groups.len(),
-        tag_count
+        files_total,
+        groups_total,
+        tag_freq_global.len()
     )?;
-    if !rollup_line.is_empty() {
-        writeln!(out, "> Tags: {}\n", rollup_line)?;
-    } else {
+    writeln!(out, "> Tags: {}", tag_k.0)?;
+    writeln!(out)?;
+
+    // ---- RENDER: MAP groups ----
+    for (group, mut list) in groups {
+        // sort by path within group
+        list.sort_by(|a, b| a.path.cmp(&b.path));
+
+        let files_n = list.len();
+        let mut local_tags: BTreeMap<String, usize> = BTreeMap::new();
+        for e in &list {
+            for t in &e.tags {
+                *local_tags.entry(t.clone()).or_insert(0) += 1;
+            }
+        }
+        let tag_line = top_k_tags(&local_tags, 10).0;
+
+        writeln!(out, "## `{}/`  _(files: {})_", group, files_n)?;
+        if !tag_line.is_empty() {
+            writeln!(out, "")?;
+            writeln!(out, "> Tags: {}", tag_line)?;
+        }
+        writeln!(out, "")?;
+        for e in &list {
+            if e.tags.is_empty() {
+                writeln!(out, "- `{}` [{}] — {}", e.path, e.lang, e.summary)?;
+            } else {
+                writeln!(
+                    out,
+                    "- `{}` [{}] _[{}]_ — {}",
+                    e.path,
+                    e.lang,
+                    e.tags.join(", "),
+                    e.summary
+                )?;
+            }
+        }
         writeln!(out)?;
     }
 
-    // Noise groups (don’t spam output). Adjust to taste.
-    let noise_groups: BTreeSet<&'static str> = [
-        "target", "node_modules", ".git", ".github", ".idea", ".vscode",
-        ".cargo", ".venv", "venv", "dist", "build", "out",
-    ].into_iter().collect();
+    // ---- RENDER: TREE-LITE appendix ----
+    writeln!(out, "---")?;
+    writeln!(out, "")?;
+    writeln!(out, "## Appendix: Directory Tree")?;
+    writeln!(out, "")?;
+    writeln!(out, "> Compact, skimmable tree with size/lang and one-line summary")?;
+    writeln!(out, "")?;
 
-    // Per-group listing cap (map is a catalog, not exhaustive)
-    const LIST_CAP: usize = 120;
-
-    for (group, entries) in groups {
-        if noise_groups.contains(group.as_str()) {
-            // Skip noisy infra entirely; uncomment to show a collapsed line instead:
-            // writeln!(out, "## `{}/` _(skipped noisy infra, {} files)_\n", group, entries.len())?;
-            continue;
-        }
-
-        let display_group = if group == "." { "(root)".to_string() } else { format!("{}/", group) };
-        writeln!(out, "## `{}`  _(files: {})_\n", display_group, entries.len())?;
-
-        // Optional sub-section tag rollup per group
-        let mut gtags: BTreeMap<String, usize> = BTreeMap::new();
-        for e in &entries {
-            for t in &e.tags {
-                *gtags.entry(t.clone()).or_insert(0) += 1;
-            }
-        }
-        let (groll, _) = top_k_tags(&gtags, 8);
-        if !groll.is_empty() {
-            writeln!(out, "> Tags: {}\n", groll)?;
-        }
-
-        let mut shown = 0usize;
-        for e in entries.iter().take(LIST_CAP) {
-            let tag_str = if e.tags.is_empty() {
-                String::new()
-            } else {
-                format!(" _[{}]_", e.tags.join(", "))
-            };
-            let sum_suffix = if e.summary.is_empty() {
-                String::new()
-            } else {
-                format!(" — {}", e.summary)
-            };
-
-            // Show relative path inside the group
-            writeln!(out, "- `{}` [{}]{}{}", e.path, e.lang, tag_str, sum_suffix)?;
-            shown += 1;
-        }
-
-        if shown < entries.len() {
-            writeln!(
-                out,
-                "\n_… {} more in `{}` (use Tree view or open the index for full list)_\n",
-                entries.len() - shown,
-                display_group
-            )?;
-        } else {
-            writeln!(out)?;
-        }
-    }
+    // root children in sorted order
+    render_tree(&mut out, &dir_tree, "", 0)?;
 
     Ok(())
 }
 
-/* ----------------------------- helpers ----------------------------- */
+/* ============================
+   Internals
+   ============================ */
 
 #[derive(Clone)]
 struct EntryLite {
-    path: String,   // relative path inside the group
+    path: String,   // relative to top-level group
     lang: String,
     summary: String,
     tags: Vec<String>,
 }
 
+fn load_entries(index_path: &Path) -> std::io::Result<Vec<FileIntentEntry>> {
+    let f = File::open(index_path)?;
+    let br = BufReader::new(f);
+    let mut v = Vec::new();
+
+    for (i, line) in br.lines().enumerate() {
+        let line = match line {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[map] warn: bad JSONL at line {}: {}", i + 1, e);
+                continue;
+            }
+        };
+        match serde_json::from_str::<FileIntentEntry>(&line) {
+            Ok(e) => v.push(e),
+            Err(e) => {
+                eprintln!("[map] warn: bad JSONL at line {}: {}", i + 1, e);
+                continue;
+            }
+        }
+    }
+    Ok(v)
+}
+
 /// Return (top_level_dir, remainder_relative_path).
-/// For paths with no '/', group = "." and rel="filename" (or ".").
+/// For paths with no '/', group = "Cargo.toml" dir-like marker (".") and rel="filename".
 fn split_top(path: &str) -> (String, String) {
     let pb = PathBuf::from(path);
-    let mut comps = pb.components();
-
-    let first = comps.next();
-    match first {
-        Some(c) => {
-            let top = c.as_os_str().to_string_lossy().to_string();
-            let rel = comps.as_path().to_string_lossy().to_string();
-            if rel.is_empty() { (top, String::from(".")) } else { (top, rel) }
-        }
-        None => (String::from("."), String::from(".")),
+    let comp: Vec<_> = pb.components().collect();
+    if comp.len() <= 1 {
+        (String::from("Cargo.toml"), String::from("."))
+    } else {
+        let group = comp[0].as_os_str().to_string_lossy().to_string();
+        let rel = pb
+            .iter()
+            .skip(1)
+            .collect::<PathBuf>()
+            .to_string_lossy()
+            .to_string();
+        (group, if rel.is_empty() { ".".into() } else { rel })
     }
 }
 
 fn clamp_summary(s: &str) -> String {
-    let s = s.trim();
-    if s.is_empty() { return String::new(); }
-    // collapse whitespace + clamp to a single, short sentence
-    let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    truncate_ellipsis(&s, 140)
+    truncate_ellipsis(s.trim(), 140)
 }
 
 fn truncate_ellipsis(s: &str, max: usize) -> String {
-    if s.len() <= max { return s.to_string(); }
-    let mut out = s[..max].to_string();
-    out.push('…');
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut t = s[..max].to_string();
+    t.push('…');
+    t
+}
+
+fn normalize_tags(tags: &[String]) -> Vec<String> {
+    // keep order, dedup
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for t in tags {
+        if seen.insert(t.to_string()) {
+            out.push(t.to_string());
+        }
+    }
     out
 }
 
 fn top_k_tags(freq: &BTreeMap<String, usize>, k: usize) -> (String, usize) {
     let mut v: Vec<(&str, usize)> = freq.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
-    let shown = v.iter()
-        .take(k)
-        .map(|(t, n)| format!("`{}`({})", t, n))
-        .collect::<Vec<_>>()
-        .join(", ");
-    (shown, freq.len())
+    v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    let mut items = Vec::new();
+    for (i, (tag, n)) in v.iter().enumerate() {
+        if i >= k {
+            break;
+        }
+        items.push(format!("`{}`({})", tag, n));
+    }
+    (items.join(", "), v.len())
+}
+
+/* -------- TREE-LITE builder -------- */
+
+#[derive(Default)]
+struct DirNode {
+    // name is implied by map key; this holds children and file entries
+    subdirs: BTreeMap<String, DirNode>,
+    files: Vec<TreeFile>, // sorted by filename
+}
+
+#[derive(Clone)]
+struct TreeFile {
+    name: String,  // filename only
+    lang: String,
+    size: usize,
+    summary: String,
+    
+    
+}
+
+/// Build a directory tree rooted at "" from entries.
+fn build_tree(entries: &[FileIntentEntry]) -> DirNode {
+    let mut root = DirNode::default();
+    for e in entries {
+        let p = Path::new(&e.path);
+        let mut cur = &mut root;
+
+        if let Some(parent) = p.parent() {
+            for comp in parent {
+                let key = comp.to_string_lossy().to_string();
+                cur = cur.subdirs.entry(key).or_default();
+            }
+        }
+
+        let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+        cur.files.push(TreeFile {
+            name,
+            lang: e.lang.clone(),
+            size: e.size,
+            summary: clamp_summary(e.summary.as_deref().unwrap_or("")),                        
+        });
+    }
+
+    // sort files for each node
+    fn sort_node(n: &mut DirNode) {
+        n.files.sort_by(|a, b| a.name.cmp(&b.name));
+        for (_k, v) in n.subdirs.iter_mut() {
+            sort_node(v);
+        }
+    }
+    let mut root_mut = root;
+    sort_node(&mut root_mut);
+    root_mut
+}
+
+/// Render the tree to markdown (indented bullet list).
+fn render_tree(out: &mut File, node: &DirNode, base: &str, depth: usize) -> std::io::Result<()> {
+    // render current dir header only if depth==0 (root) or base not empty
+    if depth == 0 && !base.is_empty() {
+        writeln!(out, "- **{}/**", base)?;
+    }
+
+    // subdirectories first
+    for (name, child) in &node.subdirs {
+        let path = if base.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", base, name)
+        };
+
+        // count totals: number of immediate files in child
+        let files_n = child.files.len();
+        let subdirs_n = child.subdirs.len();
+        writeln!(
+            out,
+            "{}- **{}/** — {} dirs, {} files",
+            indent(depth),
+            path,
+            subdirs_n,
+            files_n
+        )?;
+        render_tree(out, child, &path, depth + 1)?;
+    }
+
+    // files in this dir
+    for f in &node.files {
+        writeln!(
+            out,
+            "{}- `{}` — {} • {} • {}",
+            indent(depth + 1),
+            f.name,
+            f.lang,
+            util::humanize_bytes(f.size as u64),
+            f.summary
+        )?;
+    }
+
+    Ok(())
+}
+
+fn indent(depth: usize) -> String {
+    let mut s = String::new();
+    for _ in 0..depth {
+        s.push_str("  ");
+    }
+    s
 }

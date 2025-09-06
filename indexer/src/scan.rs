@@ -328,7 +328,7 @@ fn build_entry(
             summary,
             token_estimate,
 
-            role,
+            role: role.to_string(),
             module,
             imports,
             exports,
