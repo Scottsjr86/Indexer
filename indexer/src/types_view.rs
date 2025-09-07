@@ -49,7 +49,7 @@ pub fn build_types_from_index(index_path: &Path, output_path: &Path) -> io::Resu
         }
     }
 
-    let project_root = index_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let project_root = project_root_from_index(index_path);
 
     let mut per_file: BTreeMap<PathBuf, Vec<Decl>> = BTreeMap::new();
 
@@ -201,6 +201,16 @@ fn normalize_token_string(s: &str) -> String {
     ] { out = out.replace(a, b); }
     out = out.replace(" ,", ",").replace(" :", ":");
     out
+}
+
+fn project_root_from_index(index_path: &Path) -> PathBuf {
+    // .gpt_index/indexes/<slug>.jsonl  ->  project root is three parents up
+    index_path
+        .parent()  // indexes/
+        .and_then(|p| p.parent())  // .gpt_index/
+        .and_then(|p| p.parent())  // <project root>
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
 }
 
 // tiny single-file dep to compute relative paths

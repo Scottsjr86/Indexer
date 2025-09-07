@@ -56,10 +56,7 @@ pub fn build_functions_from_index(index_path: &Path, output_path: &Path) -> io::
     }
 
     // Resolve project root from index location
-    let project_root = index_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
+    let project_root = project_root_from_index(index_path);
 
     let mut per_file: BTreeMap<PathBuf, Groups> = BTreeMap::new();
 
@@ -245,6 +242,16 @@ impl FnCollector {
             }
         }
     }
+}
+
+fn project_root_from_index(index_path: &Path) -> PathBuf {
+    // .gpt_index/indexes/<slug>.jsonl  ->  project root is three parents up
+    index_path
+        .parent()  // indexes/
+        .and_then(|p| p.parent())  // .gpt_index/
+        .and_then(|p| p.parent())  // <project root>
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
 }
 
 fn norm_sig(sig: &syn::Signature) -> String {
