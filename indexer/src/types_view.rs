@@ -1,419 +1,225 @@
-//! Project Types view
+//! types_view.rs — renders "Project Types" grouped by source file, showing
+//! structs/enums with field/variant names verbatim. Includes attributes on fields.
 //!
-//! Renders a catalog of public type shapes (structs & enums), grouped by module.
-//! - No heavy parsing deps; brace-aware skim works for conventional Rust.
-//! - Fields/variants are kept verbatim (trimmed), avoiding hallucinated names.
-//! - Grouping uses helpers::infer_module_id(path, lang).
+//! Accepts JSON array or JSONL index files. Only `.rs` or `lang=="rust"` entries are parsed.
 //!
-//! Output: `.gpt_index/types/<slug>_PROJECT_TYPES.md`
+//! Add to Cargo.toml:
+//! ```toml
+//! [dependencies]
+//! anyhow = "1"
+//! serde = { version = "1", features = ["derive"] }
+//! serde_json = "1"
+//! syn = { version = "2", features = ["full", "extra-traits", "printing"] }
+//! quote = "1"
+//! ```
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs::{self, File},
-    io::{BufRead, BufReader, Write},
-    path::{Path},
-};
+use std::collections::BTreeMap;
+use std::fs;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
-use crate::{file_intent_entry::FileIntentEntry, helpers};
+use serde::Deserialize;
+use syn::{visit::Visit, Attribute, Fields, Item, ItemEnum, ItemStruct};
 
-/// Public entry: build types doc from a JSONL index.
-/// Files are read relative to the current working directory.
-///
-/// # Arguments
-/// * `index_path`  - JSONL with one FileIntentEntry per line
-/// * `output_path` - markdown file to write
-pub fn build_types_from_index(index_path: &Path, output_path: &Path) -> std::io::Result<()> {
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)?;
+#[derive(Debug, Deserialize)]
+struct FileIntentEntryMini {
+    path: String,
+    #[allow(dead_code)]
+    lang: Option<String>,
+}
+
+pub fn build_types_from_index(index_path: &Path, output_path: &Path) -> io::Result<()> {
+    let text = fs::read_to_string(index_path)?;
+
+    // Accept JSON array or JSONL
+    let mut entries: Vec<FileIntentEntryMini> = Vec::new();
+    let mut loaded = false;
+    if let Ok(v) = serde_json::from_str::<Vec<FileIntentEntryMini>>(&text) {
+        entries = v;
+        loaded = true;
     }
-    let entries = load_entries(index_path)?;
-
-    // Resolve repo root from the index path:
-    //   .gpt_index/indexes/<slug>.jsonl  => repo_root = index_path/../../
-    let repo_root = index_path
-        .parent()          // indexes/
-        .and_then(|p| p.parent()) // .gpt_index/
-        .and_then(|p| p.parent()) // <repo root>
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-
-    // Collect Rust files only
-    let rust_files: Vec<_> = entries
-        .iter()
-        .filter(|e| e.lang.eq_ignore_ascii_case("rust"))
-        .collect();
-
-    // Parse decls per file, group by module
-    let mut by_module: BTreeMap<String, Vec<TypeDecl>> = BTreeMap::new();
-        for e in rust_files {
-        // Prefer absolute path resolved from repo_root
-        let abs = repo_root.join(&e.path);
-        let path = if abs.exists() { abs.as_path() } else { Path::new(&e.path) };
-        let module = helpers::infer_module_id(&e.path, &e.lang);
-        let content = match fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(err) => {
-                eprintln!("[types] warn: could not read {}: {}", path.display(), err);
-                String::new()
+    if !loaded {
+        for (lineno, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            match serde_json::from_str::<FileIntentEntryMini>(line) {
+                Ok(e) => entries.push(e),
+                Err(err) => eprintln!("[types_view] skip line {}: {}", lineno + 1, err),
             }
-        };
-        // Remove comments & strings so examples in docs don’t trip the parser.
-        let clean = strip_comments_and_strings(&content);
-        let mut decls = scan_rust_types(&clean);
-        if decls.is_empty() && !content.is_empty() && e.path.ends_with(".rs") {
-            eprintln!("[types] note: no decls in {}", e.path);
-        }
-
-        // De-dup identical decl headers (in case of re-exports / macro doubles)
-        dedup_decls(&mut decls);
-        // Ignore files that only yield “example” empty decls (e.g., X/.. from docs)
-        decls.retain(|d| !(d.name.len() <= 1 && d.body_lines.is_empty()));
-        if !decls.is_empty() {
-            by_module.entry(module).or_default().extend(decls);
         }
     }
 
-    // Render
-    let mut out = File::create(output_path)?;
+    let project_root = index_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+
+    let mut per_file: BTreeMap<PathBuf, Vec<Decl>> = BTreeMap::new();
+
+    for e in entries {
+        let path = resolve_path(&project_root, &e.path);
+        let is_rust_ext = path.extension().and_then(|s| s.to_str()) == Some("rs");
+        let is_rust_tag = e.lang.as_deref() == Some("rust");
+        if !(is_rust_ext || is_rust_tag) || !path.exists() {
+            continue;
+        }
+        let file_src = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if let Ok(ast) = syn::parse_file(&file_src) {
+            let mut v = TypeCollector::default();
+            v.visit_file(&ast);
+            if !v.out.is_empty() {
+                per_file.entry(to_rel(&project_root, &path)).or_default().extend(v.out);
+            }
+        }
+    }
+
+    if let Some(parent) = output_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let mut out = fs::File::create(output_path)?;
     writeln!(out, "# Project Types")?;
     writeln!(out)?;
-    writeln!(
-        out,
-        "_Public structs/enums by module. Field and variant names shown verbatim._"
-    )?;
+    writeln!(out, "*Project structs/enums by module. Field and variant names shown verbatim.*")?;
     writeln!(out)?;
 
-    let total_modules = by_module.len();
-    let total_decls: usize = by_module.values().map(|v| v.len()).sum();
-    writeln!(out, "> Modules: {}  •  Decls: {}", total_modules, total_decls)?;
-    writeln!(out)?;
-
-    for (module, decls) in by_module {
-        writeln!(out, "## module: {}", module)?;
+    for (path, decls) in per_file {
+        writeln!(out, "# {}", path.display())?;
         writeln!(out)?;
         for d in decls {
-            render_decl(&mut out, &d)?;
-            writeln!(out)?;
-        }
-        writeln!(out)?;
-    }
-
-    Ok(())
-}
-
-/* ---------------- Parsing ---------------- */
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum TypeKind { Struct, Enum }
-
-#[derive(Clone, Debug)]
-struct TypeDecl {
-    kind: TypeKind,
-    vis: String,       // "pub", "pub(crate)", etc.
-    name: String,
-    body_lines: Vec<String>, // for struct fields or enum variants (verbatim, trimmed)
-}
-
-/// Minimal, brace-aware skim for "pub struct X { .. }" and "pub enum X { .. }"
-fn scan_rust_types(s: &str) -> Vec<TypeDecl> {    
-    let mut decls = Vec::new();
-    let mut i = 0usize;
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    
-
-    while let Some((start, vis, kind, name)) = find_next_head(s, i) {
-        // Find matching top-level braces for this decl
-        if let Some((body_start, body_end)) = find_brace_block(s, start) {
-            let body = &s[body_start..body_end];
-            let body_lines = collect_body_lines(body, matches!(kind, TypeKind::Struct));
-            decls.push(TypeDecl { kind, vis, name, body_lines });
-            i = body_end + 1;
-        } else {
-            // No block; advance to avoid infinite loop
-            i = start + 1;
-        }
-        if i >= len { break; }
-    }
-
-    decls
-}
-
-/// Find next "pub ... (struct|enum) Name {" head, returning (index, vis, kind, name).
-fn find_next_head(s: &str, from: usize) -> Option<(usize, String, TypeKind, String)> {
-    // Scan for "pub" and let `next_keyword` handle whitespace and `pub(..)` forms.
-    let mut idx = from;
-    while let Some(off) = s[idx..].find("pub") {
-        let pos = idx + off;
-        if let Some((kw, kind)) = next_keyword(&s[pos + 3..]) {
-            // visibility text is "pub[...]" up to the keyword start
-            let vis = s[pos..pos + 3 + kw.0].trim().to_string();
-            if let Some((name, head_end)) = next_ident(&s[pos + 3 + kw.0 + kw.1..]) {
-                // require there to be a '{' after the head (allows generics/where)
-                let rest = &s[pos + 3 + kw.0 + kw.1 + head_end..];
-                if rest.contains('{') {
-                    return Some((pos, vis, kind, name.to_string()));
+            match d {
+                Decl::Struct(s) => {
+                    let vis = if s.public { "pub " } else { "" };
+                    writeln!(out, "{}struct {} {{", vis, s.name)?;
+                    for f in s.fields {
+                        for a in f.attrs { writeln!(out, "{}", a)?; }
+                        let vis = if f.public { "pub " } else { "" };
+                        writeln!(out, "    {}{}: {},", vis, "", f.ty)?;
+                    }
+                    writeln!(out, "}}")?;
+                    writeln!(out)?;
+                }
+                Decl::Enum(e) => {
+                    let vis = if e.public { "pub " } else { "" };
+                    write!(out, "{}enum {} {{ ", vis, e.name)?;
+                    for (i, v) in e.variants.iter().enumerate() {
+                        if i > 0 { write!(out, ", ")?; }
+                        write!(out, "{}", v)?;
+                    }
+                    writeln!(out, ", }}")?;
+                    writeln!(out)?;
                 }
             }
         }
-        idx = pos + 3;
-        if idx >= s.len() { break; }
-    }
-    None
-}
-
-/// From a slice starting just after "pub", find ("struct" or "enum") and byte offsets:
-/// returns ((bytes_before_kw, bytes_of_kw), kind)
-fn next_keyword(s: &str) -> Option<((usize, usize), TypeKind)> {
-    // scan whitespace/comments lightly
-    let mut i = 0usize;
-    while i < s.len() && s.as_bytes()[i].is_ascii_whitespace() { i += 1; }
-    // optional "(crate)" etc.
-    if s[i..].starts_with('(') {
-        if let Some(endp) = s[i..].find(')') { i += endp + 1; }
-    }
-    let j = i;
-    if s[j..].starts_with("struct") {
-        return Some(((j, "struct".len()), TypeKind::Struct));
-    }
-    if s[j..].starts_with("enum") {
-        return Some(((j, "enum".len()), TypeKind::Enum));
-    }
-    None
-}
-
-/// Parse a Rust identifier; return (ident, bytes_consumed) from the given start.
-fn next_ident(s: &str) -> Option<(&str, usize)> {
-    let mut i = 0usize;
-    while i < s.len() && s.as_bytes()[i].is_ascii_whitespace() { i += 1; }
-    let start = i;
-    while i < s.len() {
-        let c = s.as_bytes()[i];
-        let ok = c.is_ascii_alphanumeric() || c == b'_' ;
-        if !ok { break; }
-        i += 1;
-    }
-    if i > start {
-        Some((&s[start..i], i))
-    } else { None }
-}
-
-/// Given position of the decl head, find the top-level `{ ... }` block that follows.
-fn find_brace_block(s: &str, head_start: usize) -> Option<(usize, usize)> {
-    // Find first '{' after head_start
-    let mut i = s[head_start..].find('{')? + head_start;
-    let mut depth = 0i32;
-    let mut in_str: Option<char> = None;
-    let bytes = s.as_bytes();
-
-    let mut start = None;
-    while i < s.len() {
-        let c = bytes[i] as char;
-        // crude string skipping
-        if in_str.is_none() && (c == '"' || c == '\'') {
-            in_str = Some(c);
-            i += 1;
-            continue;
-        }
-        if let Some(q) = in_str {
-            if c == q {
-                in_str = None;
-            }
-            i += 1;
-            continue;
-        }
-
-        if c == '{' {
-            depth += 1;
-            if depth == 1 && start.is_none() {
-                start = Some(i + 1);
-            }
-        } else if c == '}' {
-            depth -= 1;
-            if depth == 0 {
-                let st = start?;
-                return Some((st, i)); // exclusive end
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Split the body lines of a struct/enum block into neat one-liners.
-/// - For structs: keep lines with field-like `pub foo: Type` or `foo: Type` (we prefer `pub`).
-/// - For enums: keep each top-level variant line (trim trailing comma).
-fn collect_body_lines(body: &str, is_struct: bool) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut depth = 0i32;
-    let mut cur = String::new();
-
-    // We gather top-level commas/newlines as separators for enum variants.
-    for raw in body.lines() {
-        let mut l = raw.trim().to_string();
-        // skip pure attribute lines
-        if l.starts_with("#[") { continue; }
-        // track braces for tuple/struct variants; only commit at depth 0
-        for ch in l.chars() {
-            if ch == '{' || ch == '(' { depth += 1; }
-            if ch == '}' || ch == ')' { depth -= 1; }
-        }
-
-        if is_struct {
-            // Only keep public fields, drop private to avoid leaking internals.
-            // Remove any leading inline attributes like `#[serde(...)]`
-            while l.starts_with("#[") {
-                if let Some(p) = l.find(']') { l = l[p+1..].trim_start().to_string(); } else { break; }
-            }
-            let ls = l.trim_start();
-            if ls.starts_with("pub ") && ls.contains(':') {
-                if l.ends_with(',') { l.pop(); }
-                out.push(l);
-            }
-
-        } else {
-            // Enum: accumulate until a top-level comma or we’re back at depth 0 on newline
-            cur.push_str(raw.trim());
-            if l.ends_with(',') && depth == 0 {
-                if cur.ends_with(',') { cur.pop(); }
-                out.push(cur.trim().to_string());
-                cur.clear();
-            } else {
-                cur.push(' ');
-            }
-        }
-    }
-    if !is_struct {
-        let t = cur.trim();
-        if !t.is_empty() { out.push(t.to_string()); }
     }
 
-    // Clean duplicates / empties
-    let mut seen = BTreeSet::new();
-    out.retain(|s| !s.is_empty() && seen.insert(s.clone()));
-    out
-}
-
-fn dedup_decls(v: &mut Vec<TypeDecl>) {
-    let mut seen = BTreeSet::new();
-    v.retain(|d| {
-        let key = format!("{:?}::{}::{}", d.kind, d.vis, d.name);
-        seen.insert(key)
-    });
-}
-
-/* ---------------- Rendering ---------------- */
-
-fn render_decl(out: &mut File, d: &TypeDecl) -> std::io::Result<()> {
-    match d.kind {
-        TypeKind::Struct => {
-            writeln!(out, "pub struct {} {{", d.name)?;
-            // Render in stable order.
-            let mut fields = d.body_lines.clone();
-            fields.sort();
-            if fields.is_empty() {
-                writeln!(out, "  /* non-public or no fields */")?;
-            }
-            for f in fields {
-                writeln!(out, "  {}", f)?;
-            }
-            writeln!(out, "}}")?;
-        }
-        TypeKind::Enum => {
-            writeln!(out, "pub enum {} {{", d.name)?;
-            for v in &d.body_lines {
-                writeln!(out, "  {},", v)?;
-            }
-            writeln!(out, "}}")?;
-        }
-    }
     Ok(())
 }
 
-/* ---------------- Sanitization ---------------- */
+fn resolve_path(root: &Path, p: &str) -> PathBuf { let pb = PathBuf::from(p); if pb.is_absolute() { pb } else { root.join(pb) } }
+fn to_rel(root: &Path, p: &Path) -> PathBuf { pathdiff::diff_paths(p, root).unwrap_or_else(|| p.to_path_buf()) }
 
-/// Very lightweight pass to blank out comments and string-literals so
-/// example code in docs doesn’t look like real declarations.
-fn strip_comments_and_strings(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0usize;
-    let b = s.as_bytes();
-    let mut in_sl_comment = false;
-    let mut in_ml_comment = false;
-    let mut in_str: Option<char> = None;
-    while i < b.len() {
-        let c = b[i] as char;
-        // end single-line comment
-        if in_sl_comment {
-            if c == '\n' {
-                in_sl_comment = false;
-                out.push(c);
-            } else {
-                out.push(' ');
+#[derive(Default)]
+pub struct TypeCollector { pub out: Vec<Decl>, }
+
+impl<'ast> syn::visit::Visit<'ast> for TypeCollector {
+    fn visit_item(&mut self, i: &'ast Item) {
+        match i {
+            Item::Struct(s) => self.push_struct(s),
+            Item::Enum(e) => self.push_enum(e),
+            Item::Mod(m) => {
+                if let Some((_brace, items)) = &m.content {
+                    for it in items { self.visit_item(it); }
+                }
             }
-            i += 1;
-            continue;
+            _ => {}
         }
-        // end multi-line comment
-        if in_ml_comment {
-            if c == '*' && i + 1 < b.len() && b[i+1] as char == '/' {
-                in_ml_comment = false; i += 2; out.push_str("  "); continue;
-            }
-            out.push(' ');
-            i += 1;
-            continue;
-        }
-        // in string?
-        if let Some(q) = in_str {
-            if c == '\\' { // skip escaped
-                out.push(' '); i += 2; continue;
-            }
-            if c == q { in_str = None; }
-            out.push(' ');
-            i += 1;
-            continue;
-        }
-        // start of comment?
-        if c == '/' && i + 1 < b.len() {
-            let n = b[i+1] as char;
-            if n == '/' { in_sl_comment = true; out.push_str("  "); i += 2; continue; }
-            if n == '*' { in_ml_comment = true; out.push_str("  "); i += 2; continue; }
-        }
-        // start of string?
-        if c == '"' || c == '\'' {
-            in_str = Some(c);
-            out.push(' ');
-            i += 1;
-            continue;
-        }
-        out.push(c);
-        i += 1;
     }
+}
+
+impl TypeCollector {
+    fn push_struct(&mut self, s: &ItemStruct) {
+        let mut fields_out = Vec::new();
+        match &s.fields {
+            Fields::Named(named) => {
+                for f in &named.named {
+                    let attrs = render_attrs(&f.attrs);
+                    let ty = norm_tokens(&f.ty);
+                    let public = matches!(f.vis, syn::Visibility::Public(_));
+                    fields_out.push(FieldDecl { attrs, public, ty });
+                }
+            }
+            Fields::Unnamed(unnamed) => {
+                for f in &unnamed.unnamed {
+                    let attrs = render_attrs(&f.attrs);
+                    let ty = norm_tokens(&f.ty);
+                    let public = matches!(f.vis, syn::Visibility::Public(_));
+                    fields_out.push(FieldDecl { attrs, public, ty });
+                }
+            }
+            Fields::Unit => {}
+        }
+        let public = matches!(s.vis, syn::Visibility::Public(_));
+        self.out.push(Decl::Struct(StructDecl { name: s.ident.to_string(), public, fields: fields_out }));
+    }
+
+    fn push_enum(&mut self, e: &ItemEnum) {
+        let public = matches!(e.vis, syn::Visibility::Public(_));
+        let variants = e.variants.iter().map(|v| v.ident.to_string()).collect::<Vec<_>>();
+        self.out.push(Decl::Enum(EnumDecl { name: e.ident.to_string(), public, variants }));
+    }
+}
+
+#[derive(Debug)] pub enum Decl { Struct(StructDecl), Enum(EnumDecl) }
+#[derive(Debug)] pub struct StructDecl { pub name: String, pub public: bool, pub fields: Vec<FieldDecl>, }
+#[derive(Debug)] pub struct FieldDecl { pub attrs: Vec<String>, pub public: bool, pub ty: String, }
+#[derive(Debug)] pub struct EnumDecl { pub name: String, pub public: bool, pub variants: Vec<String>, }
+
+fn render_attrs(attrs: &[Attribute]) -> Vec<String> {
+    attrs.iter().filter_map(|a| {
+        let path = a.path().segments.iter().map(|s| s.ident.to_string()).collect::<Vec<_>>().join("::");
+        if ["serde", "allow", "derive"].contains(&path.as_str()) {
+            Some(format!("#[{}]", norm_tokens(a.meta.clone())))
+        } else { None }
+    }).collect()
+}
+
+fn norm_tokens<T: quote::ToTokens>(t: T) -> String {
+    let s = t.into_token_stream().to_string();
+    normalize_token_string(&s)
+}
+
+fn normalize_token_string(s: &str) -> String {
+    let mut out = s.to_string();
+    for (a, b) in [
+        (" < ", "<"), (" > ", ">"), (" ( ", "("), (" ) ", ")"),
+        (" [ ", "["), (" ] ", "]"), (" , ", ", "), (" : : ", "::"),
+        (" & '", "&'"), (" & ", " &"), (" :: ", "::"), (" = > ", "=>"),
+        (" | ", "|"), (" ;", ";"),
+    ] { out = out.replace(a, b); }
+    out = out.replace(" ,", ",").replace(" :", ":");
     out
 }
 
-/* ---------------- JSONL loader ---------------- */
-
-fn load_entries(index_path: &Path) -> std::io::Result<Vec<FileIntentEntry>> {
-    let f = File::open(index_path)?;
-    let br = BufReader::new(f);
-    let mut v = Vec::new();
-
-    for (i, line) in br.lines().enumerate() {
-        let line = match line {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("[types] warn: bad JSONL at line {}: {}", i + 1, e);
-                continue;
-            }
-        };
-        match serde_json::from_str::<FileIntentEntry>(&line) {
-            Ok(e) => v.push(e),
-            Err(e) => {
-                eprintln!("[types] warn: bad JSONL at line {}: {}", i + 1, e);
-                continue;
+// tiny single-file dep to compute relative paths
+mod pathdiff {
+    use std::path::{Component, Path, PathBuf};
+    pub fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+        let mut ita = path.components();
+        let mut itb = base.components();
+        let mut comps: Vec<Component> = Vec::new();
+        loop {
+            match (ita.clone().next(), itb.clone().next()) {
+                (Some(a), Some(b)) if a == b => { ita.next(); itb.next(); }
+                _ => break,
             }
         }
+        for _ in itb { comps.push(Component::ParentDir); }
+        comps.extend(ita);
+        let mut p = PathBuf::new();
+        for c in comps { p.push(c.as_os_str()); }
+        Some(p)
     }
-    Ok(v)
 }
