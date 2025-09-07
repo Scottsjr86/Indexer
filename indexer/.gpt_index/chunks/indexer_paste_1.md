@@ -1,7 +1,7 @@
 # GPT Paste Chunk 1
 
-> generated: 2025-09-07T04:15:00.668309060+00:00
-> files: 16  •  parts: 16  •  ~tokens: 7273
+> generated: 2025-09-07T14:33:21.838630769+00:00
+> files: 16  •  parts: 16  •  ~tokens: 7237
 
 ## `Cargo.toml` [toml]
 
@@ -148,7 +148,7 @@ fn print_help_types() {
 
 ## `src/custom_view.rs` [rust]
 
-- sha1: `eed2ca05f0f7c03dd5e8b4a42ded7cfd48c660ff` • size: 14944 • mtime: 1757217535
+- sha1: `ef44db6b1ce731abda51ed77b24876e3e3eb049a` • size: 15653 • mtime: 1757255502
 **Summary:** Filesystem / IO utilities.
 ```rust
 custom_view.rs — "custom index blocks" extracted from your source files.
@@ -492,7 +492,7 @@ fn main() -> Result<()> {
 
 ## `src/map_view.rs` [rust]
 
-- sha1: `90e3c2f12c33af8118aaeae79d7e40fc91602420` • size: 9160 • mtime: 1757173104
+- sha1: `8cb4c3eabd4e78f68a1cdabf20b5eb7479427620` • size: 9164 • mtime: 1757254025
 **Summary:** Builds semantic project map (markdown).
 ```rust
 Combined Project Map (with tree-lite appendix)
@@ -543,7 +543,7 @@ fn build_tree(entries: &[FileIntentEntry]) -> DirNode {
 /// Render the tree to markdown (indented bullet list).
 fn render_tree(out: &mut File, node: &DirNode, base: &str, depth: usize) -> std::io::Result<()> {
     // render current dir header only if depth==0 (root) or base not empty
-fn indent(depth: usize) -> String {
+pub fn indent(depth: usize) -> String {
     let mut s = String::new();
 ```
 
@@ -675,7 +675,7 @@ mod tests {
 
 ## `src/types_view.rs` [rust]
 
-- sha1: `f0b65256dbb43026ac0d1aae1bb61cbd8ff67827` • size: 8580 • mtime: 1757218451
+- sha1: `ef53f20e80b4c95eefc86a9a1874f63c607f427c` • size: 9280 • mtime: 1757255304
 **Summary:** Filesystem / IO utilities.
 ```rust
 types_view.rs — renders "Project Types" grouped by source file, showing
@@ -710,6 +710,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use syn::{visit::Visit, Attribute, Fields, Item, ItemEnum, ItemStruct};
+use crate::map_view::indent;
 #[derive(Debug, Deserialize)]
 struct FileIntentEntryMini {
     path: String,
@@ -728,8 +729,6 @@ impl TypeCollector {
         let mut fields_out = Vec::new();
     fn push_enum(&mut self, e: &ItemEnum) {
         let public = matches!(e.vis, syn::Visibility::Public(_));
-#[derive(Debug)] pub enum Decl { Struct(StructDecl), Enum(EnumDecl) }
-#[derive(Debug)] pub struct StructDecl { pub name: String, pub public: bool, pub fields: Vec<FieldDecl>, }
 ```
 
 ## `src/util.rs` [rust]

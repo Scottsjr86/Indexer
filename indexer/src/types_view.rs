@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use syn::{visit::Visit, Attribute, Fields, Item, ItemEnum, ItemStruct};
 
+use crate::map_view::indent;
+
 #[derive(Debug, Deserialize)]
 struct FileIntentEntryMini {
     path: String,
@@ -91,15 +93,24 @@ pub fn build_types_from_index(index_path: &Path, output_path: &Path) -> io::Resu
         for d in decls {
             match d {
                 Decl::Struct(s) => {
+                    // render a struct
                     let vis = if s.public { "pub " } else { "" };
                     writeln!(out, "{}struct {} {{", vis, s.name)?;
+
+                    // ⬇️ This for-loop was missing, which is why `f` was “not found”
                     for f in s.fields {
-                        for a in f.attrs { writeln!(out, "{}", a)?; }
+                        for a in f.attrs {
+                            writeln!(out, "{}", a)?;
+                        }
                         let vis = if f.public { "pub " } else { "" };
-                        writeln!(out, "    {}{}: {},", vis, "", f.ty)?;
+                        match &f.name {
+                            Some(name) => writeln!(out, "{}{}{}: {},", indent(1), vis, name, f.ty)?,
+                            None       => writeln!(out, "{}{}{},",      indent(1), vis, f.ty)?, // tuple field
+                        }
                     }
+
                     writeln!(out, "}}")?;
-                    writeln!(out)?;
+                    writeln!(out, "")?;
                 }
                 Decl::Enum(e) => {
                     let vis = if e.public { "pub " } else { "" };
@@ -145,18 +156,20 @@ impl TypeCollector {
         match &s.fields {
             Fields::Named(named) => {
                 for f in &named.named {
-                    let attrs = render_attrs(&f.attrs);
-                    let ty = norm_tokens(&f.ty);
+                    let attrs  = render_attrs(&f.attrs);
+                    let ty     = norm_tokens(&f.ty);
                     let public = matches!(f.vis, syn::Visibility::Public(_));
-                    fields_out.push(FieldDecl { attrs, public, ty });
+                    let name   = f.ident.as_ref().map(|id| id.to_string()); // <-- NEW
+                    fields_out.push(FieldDecl { attrs, public, name, ty }); // <-- name included
                 }
             }
             Fields::Unnamed(unnamed) => {
                 for f in &unnamed.unnamed {
-                    let attrs = render_attrs(&f.attrs);
-                    let ty = norm_tokens(&f.ty);
+                    let attrs  = render_attrs(&f.attrs);
+                    let ty     = norm_tokens(&f.ty);
                     let public = matches!(f.vis, syn::Visibility::Public(_));
-                    fields_out.push(FieldDecl { attrs, public, ty });
+                    let name   = None; // <-- NEW
+                    fields_out.push(FieldDecl { attrs, public, name, ty });
                 }
             }
             Fields::Unit => {}
@@ -172,10 +185,30 @@ impl TypeCollector {
     }
 }
 
-#[derive(Debug)] pub enum Decl { Struct(StructDecl), Enum(EnumDecl) }
-#[derive(Debug)] pub struct StructDecl { pub name: String, pub public: bool, pub fields: Vec<FieldDecl>, }
-#[derive(Debug)] pub struct FieldDecl { pub attrs: Vec<String>, pub public: bool, pub ty: String, }
-#[derive(Debug)] pub struct EnumDecl { pub name: String, pub public: bool, pub variants: Vec<String>, }
+#[derive(Debug)] 
+pub enum Decl { 
+    Struct(StructDecl), 
+    Enum(EnumDecl) 
+}
+#[derive(Debug)] 
+pub struct StructDecl { 
+    pub name: String, 
+    pub public: bool, 
+    pub fields: Vec<FieldDecl>, 
+}
+#[derive(Debug)] 
+pub struct FieldDecl { 
+    pub attrs: Vec<String>, 
+    pub public: bool,
+    pub name: Option<String>, 
+    pub ty: String, 
+}
+#[derive(Debug)] 
+pub struct EnumDecl { 
+    pub name: String, 
+    pub public: bool, 
+    pub variants: Vec<String>, 
+}
 
 fn render_attrs(attrs: &[Attribute]) -> Vec<String> {
     attrs.iter().filter_map(|a| {

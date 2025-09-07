@@ -40,7 +40,7 @@ _Legend: grouped by top-level dir • each line = `rel/path [lang] — summary` 
 - **src/** — 0 dirs, 15 files
     - `chunker.rs` — rust • 13 KB • Splits indexed files into GPT-ready paste chunks.
     - `commands.rs` — rust • 15 KB • CLI subcommands wiring and user-facing flows.
-    - `custom_view.rs` — rust • 15 KB • Filesystem / IO utilities.
+    - `custom_view.rs` — rust • 16 KB • Filesystem / IO utilities.
     - `diff.rs` — rust • 8.3 KB • Compute a structured diff between two index snapshots.
     - `file_intent_entry.rs` — rust • 14 KB • File-level intent record: what is this file, what does it export, and how should GPT treat it?
     - `functions_view.rs` — rust • 9.9 KB • Filesystem / IO utilities.
@@ -51,6 +51,6 @@ _Legend: grouped by top-level dir • each line = `rel/path [lang] — summary` 
     - `map_view.rs` — rust • 9.2 KB • Builds semantic project map (markdown).
     - `scan.rs` — rust • 17 KB • Repo scanner: walk, hash, detect, snippet, summarize.
     - `snippet.rs` — rust • 14 KB • PASTE emitter: model-optimized prompt pack.
-    - `types_view.rs` — rust • 8.6 KB • Filesystem / IO utilities.
+    - `types_view.rs` — rust • 9.3 KB • Filesystem / IO utilities.
     - `util.rs` — rust • 13 KB • Utility helpers for the crate.
   - `Cargo.toml` — toml • 360 B • Cargo manifest / workspace configuration.

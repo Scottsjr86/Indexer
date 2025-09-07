@@ -235,6 +235,7 @@ fn main () -> Result<() > {
 ## public
 
 fn build_map_from_index (index_path: &Path, output_path: &Path) -> std::io::Result<() > {
+fn indent (depth: usize) -> String {
 
 ## internal
 
@@ -246,7 +247,6 @@ fn normalize_tags (tags: &[String]) -> Vec<String > {
 fn top_k_tags (freq: &BTreeMap<String, usize>, k: usize) -> (String, usize) {
 fn build_tree (entries: &[FileIntentEntry]) -> DirNode {
 fn render_tree (out: &mut File, node: &DirNode, base: &str, depth: usize) -> std::io::Result<() > {
-fn indent (depth: usize) -> String {
 
 # src/scan.rs
 

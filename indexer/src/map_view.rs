@@ -312,7 +312,7 @@ fn render_tree(out: &mut File, node: &DirNode, base: &str, depth: usize) -> std:
     Ok(())
 }
 
-fn indent(depth: usize) -> String {
+pub fn indent(depth: usize) -> String {
     let mut s = String::new();
     for _ in 0..depth {
         s.push_str("  ");

@@ -1,317 +1,261 @@
-Here’s a **ready-to-drop `README.md`** that’s both “for dummies” and **highly optimized for GPT workflows**. It explains exactly how to run `indexer`, what to upload to ChatGPT, and how Map vs Tree vs Chunks differ. It also documents the JSONL schema, directory layout, and common tasks.
+# Forge Indexer
+
+A fast, zero-config **project indexer** that scans your repo and emits:
+
+* a skimmable **Project Map**,
+* a **Types** digest (structs/enums by file),
+* a **Functions** digest (public/internal/tests by file),
+* **paste-ready chunks** for LLMs—split by an approximate token cap.
+
+It uses a compact **JSONL index** as the single source of truth, so all views stay in sync.
+
+> Repo layout & one-liners are documented in the generated Project Map.&#x20;
 
 ---
 
-# Indexer — One-Command Repo Context for GPT
-
-Indexer turns any codebase into a **portable, GPT-ready knowledge bundle**.
-Run one command, upload a few files, and your AI has rich, structured context about your repo.
-
-* **`indexer init`** → scans your repo and writes:
-
-  * **Indexes**: `.gpt_index/indexes/<slug>.jsonl`
-  * **Map** (catalog view): `.gpt_index/maps/<slug>_PROJECT_MAP.md`
-  * **Tree** (structure view): `.gpt_index/trees/<slug>_PROJECT_TREE.md`
-  * **Paste chunks** (LLM-ready): `.gpt_index/chunks/<slug>_paste_1.md`, `_2.md`, …
-
-The **workdir slug** (`<slug>`) is derived from the current directory (safe for filenames), so running in multiple repos never collides.
-
----
-
-## Why this exists
-
-Large repos overwhelm LLM context windows. Indexer generates **compact, high-signal artifacts** you can upload that make your assistant instantly “code-aware”:
-
-* **Map**: What’s in here? (top-level catalog + terse summaries + tags)
-* **Tree**: Where is it? (hierarchy with per-file summaries)
-* **Chunks**: Show me the code. (paste-ready, token-capped markdown with file fences)
-* **Index JSONL**: Raw, structured metadata (for tooling / future automations)
-
-Upload those four outputs and you’re good to go.
-
----
-
-## Quick Start (For Humans)
-
-1. **Install (Rust required)**
+## Quickstart
 
 ```bash
-# Rust toolchain: stable recommended
-cargo build --release
-# Or run directly
-cargo run --release -- init
-```
-
-2. **From your repo root**, run:
-
-```bash
+# in your repo root
+cargo install --path .
 indexer init
-# or:
-cargo run --release -- init
+# => .gpt_index/
+#    ├─ indexes/<slug>.jsonl
+#    ├─ maps/<slug>_PROJECT_MAP.md
+#    ├─ types/<slug>_PROJECT_TYPES.md
+#    ├─ functions/<slug>_PROJECT_FUNCTIONS.md
+#    └─ chunks/<slug>_paste_1.md, _2.md, ...
 ```
 
-You’ll get:
+### Requirements
+
+* Rust 1.75+ (edition 2021)
+* Cross-platform (Linux/macOS/Windows)
+
+---
+
+## Why JSONL?
+
+Each line is one `FileIntentEntry`—stable, grep-friendly, and easy to diff. All views (map / types / functions / chunks) read this **same** JSONL so they never drift.
+
+---
+
+## Commands
+
+The CLI supports **global help** and **per-command help** in both styles:
+
+* Root help:
+
+  * `indexer --help`, `indexer -h`, or `indexer help`
+* Command help:
+
+  * `indexer chunk --help`, `indexer chunk -h`, or `indexer help chunk`
+
+### `indexer init`
+
+Scan the current directory, write `.gpt_index/indexes/<slug>.jsonl`, then auto-emit **Map → Types → Functions → Chunks**.
+
+**Usage**
+
+```
+indexer init
+```
+
+**Outputs**
+
+* `maps/<slug>_PROJECT_MAP.md`
+* `types/<slug>_PROJECT_TYPES.md`
+* `functions/<slug>_PROJECT_FUNCTIONS.md`
+* `chunks/<slug>_paste_*.md`
+
+---
+
+### `indexer reindex`
+
+Re-scan, archive the previous index, write a structured diff, then rebuild all views.
+
+**Usage**
+
+```
+indexer reindex
+```
+
+**Side-effects**
+
+* Archive: `.gpt_index/history/full/<slug>_<ts>.jsonl`
+* Diff: `.gpt_index/history/diffs/<slug>_<ts>.json`
+
+---
+
+### `indexer sub`
+
+Index only the **current subdirectory** into `.sub_index/indexes/<slug>.jsonl`.
+
+**Usage**
+
+```
+indexer sub
+```
+
+---
+
+### `indexer map`
+
+Rebuild the project map markdown from the existing index.
+
+**Usage**
+
+```
+indexer map
+```
+
+---
+
+### `indexer types`
+
+Rebuild **Project Types** (structs/enums grouped by file, field/variant names verbatim with selected attributes).
+
+**Usage**
+
+```
+indexer types
+```
+
+---
+
+### `indexer functions`
+
+Rebuild **Project Functions** (functions & methods by file, grouped into public / internal / tests). Methods are prefixed with `Type::`.
+
+**Usage**
+
+```
+indexer functions
+```
+
+---
+
+### `indexer chunk`
+
+Split the indexed content into pasteable markdown chunks, aiming for an approximate token budget per chunk.
+
+**Usage**
+
+```
+indexer chunk [--cap=<N>]
+```
+
+**Flags**
+
+* `--cap=<N>`: Approximate token cap per chunk (default: `15000`)
+
+**Examples**
+
+```
+indexer chunk
+indexer chunk --cap=12000
+```
+
+---
+
+## Output Anatomy
 
 ```
 .gpt_index/
   indexes/
-    <slug>.jsonl
+    <slug>.jsonl          # authoritative JSONL index
   maps/
-    <slug>_PROJECT_MAP.md
-  trees/
-    <slug>_PROJECT_TREE.md
+    <slug>_PROJECT_MAP.md # grouped catalog + tree appendix
+  types/
+    <slug>_PROJECT_TYPES.md
+  functions/
+    <slug>_PROJECT_FUNCTIONS.md
   chunks/
-    <slug>_paste_1.md
-    <slug>_paste_2.md
-    ...
+    <slug>_paste_1.md, _2.md, ...
   history/
-    full/<slug>_<timestamp>.jsonl       # older snapshots when reindexing
-    diffs/<slug>_<timestamp>.json       # structured diffs old→new
+    full/<slug>_<ts>.jsonl
+    diffs/<slug>_<ts>.json
 ```
 
-3. **Upload to ChatGPT (or your LLM app):**
-
-   * `maps/<slug>_PROJECT_MAP.md`
-   * `trees/<slug>_PROJECT_TREE.md`
-   * `chunks/<slug>_paste_*.md` (as many as needed)
-   * `indexes/<slug>.jsonl` (optional, for advanced queries or tools)
-
-**Tip:** Start with Map + Tree + the first one or two chunk files. Add more chunks if/when the model asks for deeper code.
-
 ---
 
-## Quick Start (For GPT)
+## Custom View Blocks (optional)
 
-Paste this when you begin a session (after uploading the files):
+You can embed **custom index blocks** in source files to stitch bespoke docs from the current file:
 
-> **System prompt for GPT:**
-> You have a repository bundle consisting of:
->
-> * A **Map** (catalog by top-level directory with one-line summaries and tags),
-> * A **Tree** (hierarchical file structure with inline summaries),
-> * One or more **Paste chunks** (code snippets with fences and per-file headers), and
-> * An **Index JSONL** file (structured metadata per file).
->   Use the Map for discovery, Tree for location and relationships, and Paste chunks to read source. Ask me for more chunks as needed.
-
----
-
-## Views & What They’re For
-
-### Project Map (catalog view)
-
-**File:** `maps/<slug>_PROJECT_MAP.md`
-**Purpose:** Scan the repo by **top-level directory**. Each entry is **one line**, with **`rel/path [lang] — summary`** and **tag rollups**.
-
-* Fast onboarding (“what’s here?”).
-* Groups noisy directories out of the way (e.g., `target/`, `.git/`, `node_modules/`, etc.).
-* Deterministic & capped so humans/GPT can skim quickly.
-
-### Project Tree (structure view)
-
-**File:** `trees/<slug>_PROJECT_TREE.md`
-**Purpose:** Show **hierarchy**. Within each directory, files are listed with brief summaries and tags. Use the Tree when you need to understand **where** things live and **how** modules relate.
-
-### Paste Chunks (LLM code view)
-
-**Files:** `chunks/<slug>_paste_1.md`, `_2.md`, …
-**Purpose:** **Code you can paste** (or upload) directly.
-Each chunk:
-
-* Has a **header** with generated timestamp, file count, token estimate.
-* Contains repeated sections per file: a small header (path, language, sha1, size, mtime), optional **Summary**, then a fenced code snippet.
-* Honors a **token cap** (default \~15k tokens per chunk) to keep each chunk safely ingestible.
-
-*Use more chunks as the conversation goes deeper.*
-
-### JSONL Index (raw metadata)
-
-**File:** `indexes/<slug>.jsonl`
-**Purpose:** Machine-readable inventory. Each line is a `FileIntentEntry` for one file (see schema below). Great for building custom tools or doing structured analysis.
-
----
-
-## Command Reference
-
-```txt
-indexer init
-    Scan repo; write index, map, tree, and chunks.
-    Creates slug-prefixed filenames to avoid collisions across repos.
-
-indexer reindex
-    Re-scan and overwrite the latest index. Archives the previous snapshot into
-    history/full/<slug>_<timestamp>.jsonl and writes a structured diff to
-    history/diffs/<slug>_<timestamp>.json.
-
-indexer tree
-    Rebuild only the Tree view at trees/<slug>_PROJECT_TREE.md.
-
-indexer map
-    Rebuild only the Map view at maps/<slug>_PROJECT_MAP.md.
-
-indexer chunk [--cap=N]
-    Re-split the JSONL index into paste-ready chunks with token cap N.
+```rust
+//--functions public
+$ # Project Functions
+$ *Functions and methods by module. Signatures are shown verbatim (one line).*
+//--end
 ```
 
-You can also scope to a subdirectory:
+Directives:
+
+* `//--<category> [filters...]` starts a block. Supported categories:
+
+  * `types` (aliases: `type`, `structs`, `enums`)
+  * `functions` (aliases: `fn`, `fns`, `function`)
+* Lines starting with `$` are emitted **verbatim** (header, intro text, etc.)
+* `//--end` closes the block
+
+Then run your custom renderer (if wired) to emit per-file sections that follow your prelude.
+
+---
+
+## Building
 
 ```bash
-indexer sub
-# Writes .sub_index/indexes/<slug>.jsonl for just the current subdir
+# dev build
+cargo build
+
+# release build
+cargo build --release
 ```
-
----
-
-## How It Works (Design Overview)
-
-1. **Scan**
-
-   * Walks the repository, skips obvious noise (binary, vendor, build outputs).
-   * Computes per-file metadata: path, lang (from extension), size, mtime (unix), sha1, tags.
-   * Extracts a **snippet** (fast, language-aware, doc-first) and a compact **summary** (intent heuristics).
-   * Writes one **JSONL line per file**.
-
-2. **Map** (`map_view`)
-
-   * Groups files by **top-level directory** (with a `(root)` bucket).
-   * Clamps summaries to one tight line; renders tag rollups for quick signal.
-   * Caps per-group listings for readability.
-
-3. **Tree** (`tree_view`)
-
-   * Builds a hierarchical view with inline summaries and tags.
-
-4. **Chunks** (`chunker`)
-
-   * Sorts and packs files into **pasteable markdown** respecting a token cap.
-   * Each file section includes metadata + fenced code (language normalized for renderers).
-   * Snippets are safely truncated and fences remain valid.
-
-5. **Diffs** (`diff`)
-
-   * On `reindex`, compares old vs new by path/sha1.
-   * Detects adds/removes/modifies and **renames** (via matching sha1 across different paths).
-   * Emits a compact JSON summary + per-item details.
-
----
-
-## JSONL Schema (`FileIntentEntry`)
-
-Each line represents one file:
-
-```jsonc
-{
-  "path": "src/chunker.rs",
-  "lang": "rust",           // normalized from extension
-  "sha1": "…",              // content hash
-  "size": 12345,            // bytes
-  "last_modified": "1693943921", // unix seconds (string)
-  "snippet": "…",           // extracted doc/code lines (compact)
-  "tags": ["rust","dir:src","ext:rs","chunk"],
-
-  "summary": "Splits index into paste-friendly markdown chunks.",
-  "token_estimate": 420,    // rough token count
-
-  // Extra signals for advanced tooling (optional)
-  "role": "bin|lib|test|doc|config|script|ui|core",
-  "module": "scan" ,        // language-aware module id (e.g., rust "foo::bar")
-  "imports": ["use foo::bar"], // skimmed edges (cheap)
-  "exports": ["pub fn run_cli"],
-
-  "lines_total": 321,
-  "lines_nonblank": 250,
-  "rel_dir": "src",         // top-level directory inside the repo
-  "noise": false            // true for noisy infra dirs (filtered in views)
-}
-```
-
-> **Compatibility:** The JSONL reader is tolerant of missing fields (`#[serde(default)]`). Older snapshots still load.
-
----
-
-## File/Directory Conventions
-
-* All outputs live in **`.gpt_index/`** (or `.sub_index/` for `indexer sub`).
-* Filenames are **slug-prefixed** (derived from the working directory), e.g.:
-
-  * `indexer_PROJECT_MAP.md`
-  * `indexer_PROJECT_TREE.md`
-  * `indexer_paste_1.md`
-
-This keeps artifacts unambiguous across multiple repos.
-
----
-
-## Prompts & Best Practices (LLM Use)
-
-* Start the chat with:
-  **“I’ve uploaded a Map, a Tree, and Paste chunks for this repo. Use Map for catalog, Tree for structure, and the chunks for code. Ask me if you need more chunks.”**
-* When asking for code changes, **reference file paths** that appear in Map/Tree:
-  *“Open `src/scan.rs` and adjust the filter to include dotfiles except `.git/`.”*
-* If the model needs deeper context, upload another `…_paste_N.md`.
-* Keep the `…jsonl` file for advanced / tooling flows (most conversations don’t need it).
-
----
-
-## Controls & Tuning
-
-* **Token cap:** `indexer chunk --cap=12000` (default \~15k).
-  Lower for stricter models; raise for o1/o3-sized contexts.
-* **Noise filtering:** Map/Tree skip or collapse noisy groups (`target/`, `node_modules/`, etc.). Adjust lists in code if needed.
-* **Language fences:** Chunker normalizes fence languages (e.g., `rust`, `python`, `ts`, `javascript`, `bash`, `cpp`, `md`).
 
 ---
 
 ## Troubleshooting
 
-* **“Index not found…”** → Run `indexer init` (or `reindex`) first.
-* **Huge repos** → Lower chunk cap or upload the first few chunks only.
-* **Weird summaries/tags** → They are **heuristics**. Improve by adding doc comments or README fragments at the top of critical files.
-* **Renames not detected?** → We detect by **matching sha1**; if content changed significantly, it’s a modify + remove/add rather than a rename.
+**“Types/Functions files are empty”**
+
+* Ensure you’ve run `indexer init` or `indexer reindex` first.
+* The views resolve real files **relative to your project root**, not the `.gpt_index/indexes` folder. If you moved or hand-edited the index file, keep paths repo-relative (e.g., `src/foo.rs`) so the resolvers can find them.
+* Confirm that the files exist and are `.rs` (or have `lang == "rust"` in the index).
+
+**“Chunks look too big/small”**
+
+* Adjust `--cap` to your target LLM’s context window: `indexer chunk --cap=12000` (defaults to `15000`).
+* Token counting is an estimate; it intentionally errs on the safe side.
 
 ---
 
-## Contributing / Extending
+## Internals (high-level)
 
-* Add language rules in:
+* **scan**: walks the repo (git-aware ignores), detects language, grabs a signal-rich snippet, computes a summary & tags, writes JSONL.
+* **map\_view**: renders a grouped catalog (by top-level dir) and a compact directory tree appendix.
+* **types\_view**: parses Rust files in the index, listing public/private **structs/enums** with field attrs.
+* **functions\_view**: parses Rust files, grouping **functions & methods** into public/internal/tests, with one-line verbatim signatures.
+* **chunker**: converts the index into project **chunks** with simple token estimates and language fences.
 
-  * **`util::ext_to_lang`** (extension → language label)
-  * **`snippet`** (doc/line scoring per language)
-  * **`intent`** (summary heuristics, config/test detection, entrypoints)
-* Add/adjust noise directory lists in `map_view` / `tree_view`.
-* Improve chunk packing (sorting strategy, per-file size hints) in `chunker`.
+(See `src/*.rs` for full details.)
 
 ---
 
-## Security & Privacy
+## Contributing
 
-* Indexer **never** uploads anything; it writes files locally.
-* You decide what to share with your LLM provider.
-* Exclude secrets before running or add ignore logic.
+* Issues / PRs welcome!
+* Keep outputs **deterministic** (sorted) and **safe to diff**.
+* Prefer **zero global state** and idempotent file ops.
 
 ---
 
 ## License
 
-MIT. See `LICENSE`.
+MIT (or your preferred license—fill this in).
 
 ---
 
-## Example Workflow
+## Credits
 
-```bash
-# From repo root
-indexer init
-
-# Upload to your LLM:
-.gpt_index/maps/<slug>_PROJECT_MAP.md
-.gpt_index/trees/<slug>_PROJECT_TREE.md
-.gpt_index/chunks/<slug>_paste_1.md
-# (optionally more chunks)
-# (optionally indexes/<slug>.jsonl)
-
-# Then ask:
-# “Given the Map and Tree, where is the CLI entrypoint implemented?
-#  Show me the `run_cli()` function and summarize its subcommands.”
-```
-
-That’s it. You now have **Iron-Man-level repo context** in one command. 🛠️🚀
+Built by Scott for a smoother “index → summarize → paste” loop, with stable JSONL at the core.

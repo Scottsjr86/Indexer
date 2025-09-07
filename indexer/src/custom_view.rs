@@ -146,13 +146,22 @@ fn types_for_file(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
     for d in v.out {
         match d {
             types_view_like::Decl::Struct(s) => {
+                // render a struct
                 let vis = if s.public { "pub " } else { "" };
                 out.push_str(&format!("{}struct {} {{\n", vis, s.name));
+
+                // ⬇️ Loop over fields so `f` is in scope for the match
                 for f in s.fields {
-                    for a in f.attrs { out.push_str(&format!("{}\n", a)); }
+                    for a in f.attrs {
+                        out.push_str(&format!("{}\n", a));
+                    }
                     let vis = if f.public { "pub " } else { "" };
-                    out.push_str(&format!("    {}{}: {},\n", vis, "", f.ty));
+                    match &f.name {
+                        Some(name) => out.push_str(&format!("    {}{}: {},\n", vis, name, f.ty)),
+                        None       => out.push_str(&format!("    {}{},\n",      vis, f.ty)), // tuple field
+                    }
                 }
+
                 out.push_str("}\n\n");
             }
             types_view_like::Decl::Enum(e) => {
@@ -225,19 +234,37 @@ mod types_view_like {
     use syn::{visit::Visit, Fields, Item, ItemEnum, ItemStruct};
 
     #[derive(Default)]
-    pub struct TypeCollector { pub out: Vec<Decl>, }
+    pub struct TypeCollector { 
+        pub out: Vec<Decl>, 
+    }
 
     #[derive(Debug)]
-    pub enum Decl { Struct(StructDecl), Enum(EnumDecl) }
+    pub enum Decl { 
+        Struct(StructDecl), 
+        Enum(EnumDecl) 
+    }
 
     #[derive(Debug)]
-    pub struct StructDecl { pub name: String, pub public: bool, pub fields: Vec<FieldDecl>, }
+    pub struct StructDecl { 
+        pub name: String, 
+        pub public: bool, 
+        pub fields: Vec<FieldDecl>, 
+    }
 
     #[derive(Debug)]
-    pub struct FieldDecl { pub attrs: Vec<String>, pub public: bool, pub ty: String, }
+    pub struct FieldDecl { 
+        pub attrs: Vec<String>, 
+        pub public: bool,
+        pub name: Option<String>, 
+        pub ty: String, 
+    }
 
     #[derive(Debug)]
-    pub struct EnumDecl { pub name: String, pub public: bool, pub variants: Vec<String>, }
+    pub struct EnumDecl { 
+        pub name: String, 
+        pub public: bool, 
+        pub variants: Vec<String>, 
+    }
 
     impl<'ast> Visit<'ast> for TypeCollector {
         fn visit_item(&mut self, i: &'ast Item) {
@@ -263,7 +290,9 @@ mod types_view_like {
                         let attrs = super::render_attrs(&f.attrs);
                         let ty = super::norm_tokens(&f.ty);
                         let public = matches!(f.vis, syn::Visibility::Public(_));
-                        fields_out.push(FieldDecl { attrs, public, ty });
+                        // named
+                        let name = f.ident.as_ref().map(|id| id.to_string());
+                        fields_out.push(FieldDecl { attrs, public, name, ty });
                     }
                 }
                 Fields::Unnamed(unnamed) => {
@@ -271,7 +300,9 @@ mod types_view_like {
                         let attrs = super::render_attrs(&f.attrs);
                         let ty = super::norm_tokens(&f.ty);
                         let public = matches!(f.vis, syn::Visibility::Public(_));
-                        fields_out.push(FieldDecl { attrs, public, ty });
+                        // unnamed
+                        let name = None;
+                        fields_out.push(FieldDecl { attrs, public, name, ty });
                     }
                 }
                 Fields::Unit => {}

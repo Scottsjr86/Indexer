@@ -5,98 +5,99 @@
 # src/chunker.rs
 
 struct FileIntentEntry {
-    pub : String,
-    pub : String,
-    pub : String,
-    pub : usize,
-    pub : String,
-    pub : Option<String >,
-    pub : String,
+  pub path: String,
+  pub lang: String,
+  pub sha1: String,
+  pub size: usize,
+  pub last_modified: String,
+  pub summary: Option<String >,
+  pub snippet: String,
 #[serde (default)]
-    pub : usize,
+  pub token_estimate: usize,
 }
 
 struct Part {
-    : String,
-    : String,
-    : String,
-    : String,
-    : String,
-    : Option<String >,
-    : usize,
-    : usize,
-    : String,
-    : usize,
+  path: String,
+  lang: String,
+  sha1: String,
+  size: String,
+  last_modified: String,
+  summary: Option<String >,
+  part_idx: usize,
+  part_total: usize,
+  body: String,
+  token_estimate: usize,
 }
 
 # src/commands.rs
 
 struct ResolvedPaths {
-    : PathBuf,
-    : String,
+  cwd: PathBuf,
+  dir_name: String,
 #[allow (dead_code)]
-    : PathBuf,
-    : PathBuf,
-    : PathBuf,
-    : PathBuf,
-    : PathBuf,
+  index_dir: PathBuf,
+  maps_dir: PathBuf,
+  types_dir: PathBuf,
+  functions_dir: PathBuf,
+  chunks_dir: PathBuf,
 #[allow (dead_code)]
-    : PathBuf,
-    : PathBuf,
-    : PathBuf,
-    : PathBuf,
+  indexes_dir: PathBuf,
+  history_full: PathBuf,
+  history_diff: PathBuf,
+  index_file: PathBuf,
 }
 
 # src/custom_view.rs
 
 struct FileIntentEntryMini {
-    : String,
+  path: String,
 #[allow (dead_code)]
-    : Option<String >,
+  lang: Option<String >,
 }
 
 struct Section {
-    : String,
-    : bool,
-    : String,
-    : String,
+  category: String,
+  verbatim: bool,
+  _lang: String,
+  render: String,
 }
 
 pub struct TypeCollector {
-    pub : Vec<Decl >,
+  pub out: Vec<Decl >,
 }
 
 pub enum Decl { Struct, Enum, }
 
 pub struct StructDecl {
-    pub : String,
-    pub : bool,
-    pub : Vec<FieldDecl >,
+  pub name: String,
+  pub public: bool,
+  pub fields: Vec<FieldDecl >,
 }
 
 pub struct FieldDecl {
-    pub : Vec<String >,
-    pub : bool,
-    pub : String,
+  pub attrs: Vec<String >,
+  pub public: bool,
+  pub name: Option<String >,
+  pub ty: String,
 }
 
 pub struct EnumDecl {
-    pub : String,
-    pub : bool,
-    pub : Vec<String >,
+  pub name: String,
+  pub public: bool,
+  pub variants: Vec<String >,
 }
 
 pub struct FnCollector {
-    pub : Vec<(Kind, String) >,
-    pub : bool,
+  pub out: Vec<(Kind, String) >,
+  pub in_test_mod: bool,
 }
 
 pub enum Kind { Public, Internal, Test, }
 
 pub struct Groups {
-    pub : Vec<String >,
-    pub : Vec<String >,
-    pub : Vec<String >,
+  pub public: Vec<String >,
+  pub internal: Vec<String >,
+  pub tests: Vec<String >,
 }
 
 # src/file_intent_entry.rs
@@ -105,93 +106,93 @@ pub enum Role { Bin, Lib, Test, Doc, Config, Script, Ui, Core, Other, }
 
 pub struct FileIntentEntry {
 #[serde (deserialize_with = "de_string_from_any")]
-    pub : String,
+  pub path: String,
 #[serde (deserialize_with = "de_string_from_any")]
-    pub : String,
+  pub lang: String,
 #[serde (deserialize_with = "de_string_from_any")]
-    pub : String,
-    pub : usize,
+  pub sha1: String,
+  pub size: usize,
 #[serde (deserialize_with = "de_string_from_any")]
-    pub : String,
+  pub last_modified: String,
 #[serde (deserialize_with = "de_string_from_any")]
-    pub : String,
+  pub snippet: String,
 #[serde (deserialize_with = "de_vec_string_from_any")]
-    pub : Vec<String >,
+  pub tags: Vec<String >,
 #[serde (default, deserialize_with = "de_opt_string_from_any")]
-    pub : Option<String >,
-    pub : usize,
+  pub summary: Option<String >,
+  pub token_estimate: usize,
 #[serde (deserialize_with = "de_string_from_any")]
-    pub : String,
+  pub role: String,
 #[serde (deserialize_with = "de_string_from_any")]
-    pub : String,
+  pub module: String,
 #[serde (deserialize_with = "de_vec_string_from_any")]
-    pub : Vec<String >,
+  pub imports: Vec<String >,
 #[serde (deserialize_with = "de_vec_string_from_any")]
-    pub : Vec<String >,
-    pub : usize,
-    pub : usize,
+  pub exports: Vec<String >,
+  pub lines_total: usize,
+  pub lines_nonblank: usize,
 #[serde (deserialize_with = "de_string_from_any")]
-    pub : String,
-    pub : bool,
+  pub rel_dir: String,
+  pub noise: bool,
 }
 
 # src/functions_view.rs
 
 struct FileIntentEntryMini {
-    : String,
+  path: String,
 #[allow (dead_code)]
-    : Option<String >,
+  lang: Option<String >,
 }
 
 pub struct FnCollector {
-    pub : Vec<(Kind, String) >,
-    pub : bool,
+  pub out: Vec<(Kind, String) >,
+  pub in_test_mod: bool,
 }
 
 pub enum Kind { Public, Internal, Test, }
 
 pub struct Groups {
-    pub : Vec<String >,
-    pub : Vec<String >,
-    pub : Vec<String >,
+  pub public: Vec<String >,
+  pub internal: Vec<String >,
+  pub tests: Vec<String >,
 }
 
 # src/map_view.rs
 
 struct EntryLite {
-    : String,
-    : String,
-    : String,
-    : Vec<String >,
+  path: String,
+  lang: String,
+  summary: String,
+  tags: Vec<String >,
 }
 
 struct DirNode {
-    : BTreeMap<String, DirNode >,
-    : Vec<TreeFile >,
+  subdirs: BTreeMap<String, DirNode >,
+  files: Vec<TreeFile >,
 }
 
 struct TreeFile {
-    : String,
-    : String,
-    : usize,
-    : String,
+  name: String,
+  lang: String,
+  size: usize,
+  summary: String,
 }
 
 # src/scan.rs
 
 pub struct ScanOptions {
-    pub : u64,
-    pub : usize,
-    pub : usize,
-    pub : bool,
-    pub : bool,
-    pub : bool,
+  pub max_file_bytes: u64,
+  pub sniff_bytes: usize,
+  pub snippet_bytes: usize,
+  pub follow_symlinks: bool,
+  pub include_docs_and_configs: bool,
+  pub split_html_embeds: bool,
 }
 
 struct HtmlBlock {
-    : & 'static str,
-    : & 'a str,
-    : BlockKind,
+  lang: & 'static str,
+  body: & 'a str,
+  kind: BlockKind,
 }
 
 enum BlockKind { Script, Style, }
@@ -199,32 +200,33 @@ enum BlockKind { Script, Style, }
 # src/types_view.rs
 
 struct FileIntentEntryMini {
-    : String,
+  path: String,
 #[allow (dead_code)]
-    : Option<String >,
+  lang: Option<String >,
 }
 
 pub struct TypeCollector {
-    pub : Vec<Decl >,
+  pub out: Vec<Decl >,
 }
 
 pub enum Decl { Struct, Enum, }
 
 pub struct StructDecl {
-    pub : String,
-    pub : bool,
-    pub : Vec<FieldDecl >,
+  pub name: String,
+  pub public: bool,
+  pub fields: Vec<FieldDecl >,
 }
 
 pub struct FieldDecl {
-    pub : Vec<String >,
-    pub : bool,
-    pub : String,
+  pub attrs: Vec<String >,
+  pub public: bool,
+  pub name: Option<String >,
+  pub ty: String,
 }
 
 pub struct EnumDecl {
-    pub : String,
-    pub : bool,
-    pub : Vec<String >,
+  pub name: String,
+  pub public: bool,
+  pub variants: Vec<String >,
 }
 
