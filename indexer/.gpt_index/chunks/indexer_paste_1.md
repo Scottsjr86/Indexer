@@ -1,20 +1,21 @@
 # GPT Paste Chunk 1
 
-> generated: 2025-09-07T14:33:21.838630769+00:00
-> files: 16  •  parts: 16  •  ~tokens: 7237
+> generated: 2025-09-10T05:03:20.680362135+00:00
+> files: 16  •  parts: 16  •  ~tokens: 7132
 
 ## `Cargo.toml` [toml]
 
-- sha1: `94d3cf096ec6da466e69690f1b39e989c3c91a70` • size: 360 • mtime: 1757214441
+- sha1: `0e0ad0ece6343dd6f15e551da1063e5048261e87` • size: 394 • mtime: 1757480454
 **Summary:** Cargo manifest / workspace configuration.
 ```toml
 [package]
 name = "indexer"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 resolver = "1"
 [dependencies]
 anyhow = "1.0.98"
+base64 = "0.22.1"
 chrono = { version = "0.4.41", features = ["serde"] }
 hex = "0.4.3"
 ignore = "0.4.23"
@@ -23,6 +24,7 @@ quote = "1.0.40"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.142"
 sha1 = "0.10.6"
+sha2 = "0.10.9"
 syn = "2.0.106"
 walkdir = "2.5.0"
 ```
@@ -81,69 +83,6 @@ mod tests {
     #[test]
     fn split_large_makes_multiple_parts() {
         let mut body = String::new();
-```
-
-## `src/commands.rs` [rust]
-
-- sha1: `b7e2df39b6a12f8a5aa8e544a4cf468b5c5d9763` • size: 15285 • mtime: 1757218023
-**Summary:** CLI subcommands wiring and user-facing flows.
-```rust
-Resolve all standard output paths under .gpt_index for the current working dir.
-use anyhow::{anyhow, Context, Result};
-use std::{
-    env,
-use crate::{
-    chunker,
-pub fn run_cli() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-fn is_help_flag(s: &str) -> bool {
-    matches!(s, "--help" | "-h" | "help")
-fn print_version() {
-    println!("{} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-/// Resolve all standard output paths under .gpt_index for the current working dir.
-fn resolve_paths() -> Result<ResolvedPaths> {
-    let cwd = std::env::current_dir().context("failed to get current_dir")?;
-struct ResolvedPaths {
-    cwd: PathBuf,
-    #[allow(dead_code)]
-    index_dir: PathBuf,
-    #[allow(dead_code)]
-    indexes_dir: PathBuf,
-fn index_root(is_reindex: bool) -> Result<()> {
-    let p = resolve_paths()?;
-fn index_subdir() -> Result<()> {
-    let cwd = std::env::current_dir().context("get current_dir")?;
-fn generate_map() -> Result<()> {
-    let p = resolve_paths()?;
-fn generate_types() -> Result<()> {
-    let p = resolve_paths()?;
-fn generate_functions() -> Result<()> {
-    let p = resolve_paths()?;
-#[allow(dead_code)]
-fn generate_custom() -> Result<()> {
-    let paths = resolve_paths()?;
-/// Support: `indexer chunk` or `indexer chunk --cap=12000`
-/// Also supports: `indexer help chunk` | `indexer chunk --help`
-fn chunk_index(arg: Option<&str>) -> Result<()> {
-    // Accept `--help` passed as the sole arg: `indexer chunk --help`
-fn parse_cap(arg: Option<&str>) -> Option<usize> {
-    let a = arg?;
-fn ensure_index_exists(p: &Path) -> Result<()> {
-    if p.exists() {
-fn print_help_dispatch(sub: Option<&str>) -> Result<()> {
-    match sub {
-fn print_help_main() {
-    println!(
-fn print_help_init() {
-    println!(
-fn print_help_reindex() {
-    println!(
-fn print_help_sub() {
-    println!(
-fn print_help_map() {
-    println!(
-fn print_help_types() {
-    println!(
 ```
 
 ## `src/custom_view.rs` [rust]
@@ -293,7 +232,7 @@ pub struct FileIntentEntry {
 
 ## `src/functions_view.rs` [rust]
 
-- sha1: `f79ce89c1fc0c2082785ce38cd698934c475ea59` • size: 9900 • mtime: 1757218368
+- sha1: `3361cf888dbe4d4c2130864775689c0a67a48968` • size: 9904 • mtime: 1757460830
 **Summary:** Filesystem / IO utilities.
 ```rust
 functions_view.rs — renders "Project Functions" grouped by file and
@@ -403,6 +342,55 @@ pub fn skim_js_ts(s: &str) -> (Vec<String>, Vec<String>) {
     let mut imports = Vec::new();
 ```
 
+## `src/index_v3.rs` [rust]
+
+- sha1: `9673f89752892aa8ea6e15974ad80c6b44e76d04` • size: 9075 • mtime: 1757475190
+**Summary:** use std::{fs, path::{Path}};
+```rust
+use std::{fs, path::{Path}};
+use anyhow::{Context, Result};
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use crate::scan::read_index;
+use syn::{Item, ItemStruct, ItemEnum, ItemImpl, ImplItem, ItemFn};
+#[derive(Serialize)]
+pub struct IndexPack {
+  format: &'static str,
+#[derive(Serialize)]
+struct LangMeta { primary: &'static str, dialect: &'static str }
+#[derive(Serialize)]
+struct Rules {
+  mode: &'static str,
+#[derive(Serialize)]
+struct PatchContract {
+  diff_format: &'static str,
+#[derive(Serialize)]
+struct FileEntry {
+  path: String,
+#[derive(Serialize)]
+struct ChunkSet {
+  chunk_size_bytes: usize,
+#[derive(Serialize)]
+struct Chunk { index: usize, offset: usize, length: usize, sha256: String }
+#[derive(Serialize)]
+struct Anchor {
+  kind: &'static str,
+#[derive(Serialize)]
+struct Range { start_line: usize, end_line: usize }
+#[derive(Serialize)]
+struct Schema {
+  fields: Option<Vec<Field>>,
+#[derive(Serialize)]
+struct Field { name: String, ty: String, public: bool }
+pub fn build_index_v3(index_path: &Path, project_root: &Path, out_path: &Path) -> Result<()> {
+  let entries = read_index(index_path).context("read_index")?; // JSONL or JSON array
+fn hex256(data: impl AsRef<[u8]>) -> String {
+  let mut h = Sha256::new(); h.update(data.as_ref()); hex::encode(h.finalize())
+fn chunk_and_merkle(bytes: &[u8]) -> (Vec<Chunk>, String) {
+  let mut list = Vec::new();
+```
+
 ## `src/intent.rs` [rust]
 
 - sha1: `5aa79496bd3b4478e0821d49d0e18eee5b5edd14` • size: 11014 • mtime: 1757173101
@@ -462,7 +450,7 @@ fn is_dblike(sl: &str, pl: &str) -> bool {
 
 ## `src/lib.rs` [rust]
 
-- sha1: `a92e08731f60e5a053125e0755808209de3c6f2c` • size: 313 • mtime: 1757114377
+- sha1: `ab8a315c5d9f92b46769377d85e37ead8fc3c28a` • size: 331 • mtime: 1757460748
 **Summary:** Root library file for this Rust crate.
 ```rust
 pub mod util;
@@ -478,6 +466,7 @@ pub mod map_view;
 pub mod commands;
 pub mod functions_view;
 pub mod custom_view;
+pub mod index_v3;
 ```
 
 ## `src/main.rs` [rust]
@@ -675,7 +664,7 @@ mod tests {
 
 ## `src/types_view.rs` [rust]
 
-- sha1: `ef53f20e80b4c95eefc86a9a1874f63c607f427c` • size: 9280 • mtime: 1757255304
+- sha1: `5bf678bd1ea41c9e8b8ec04c7ec37f90b96c4d2e` • size: 9284 • mtime: 1757460793
 **Summary:** Filesystem / IO utilities.
 ```rust
 types_view.rs — renders "Project Types" grouped by source file, showing

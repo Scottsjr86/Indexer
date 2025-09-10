@@ -24,36 +24,6 @@ fn token_estimator_floor () {
 fn split_small_is_single_part () {
 fn split_large_makes_multiple_parts () {
 
-# src/commands.rs
-
-## public
-
-fn run_cli () -> Result<() > {
-
-## internal
-
-fn is_help_flag (s: &str) -> bool {
-fn print_version () {
-fn resolve_paths () -> Result<ResolvedPaths > {
-fn index_root (is_reindex: bool) -> Result<() > {
-fn index_subdir () -> Result<() > {
-fn generate_map () -> Result<() > {
-fn generate_types () -> Result<() > {
-fn generate_functions () -> Result<() > {
-fn generate_custom () -> Result<() > {
-fn chunk_index (arg: Option<& str >) -> Result<() > {
-fn parse_cap (arg: Option<& str >) -> Option<usize > {
-fn ensure_index_exists (p: &Path) -> Result<() > {
-fn print_help_dispatch (sub: Option<& str >) -> Result<() > {
-fn print_help_main () {
-fn print_help_init () {
-fn print_help_reindex () {
-fn print_help_sub () {
-fn print_help_map () {
-fn print_help_types () {
-fn print_help_functions () {
-fn print_help_chunk () {
-
 # src/custom_view.rs
 
 ## public
@@ -138,6 +108,7 @@ fn ensure_token_estimate_sets_min () {
 
 fn build_functions_from_index (index_path: &Path, output_path: &Path) -> io::Result<() > {
 Groups::pub fn extend (& mut self, it: impl Iterator<Item = (Kind, String) >) {
+fn norm_sig (sig: &syn::Signature) -> String {
 fn diff_paths (path: &Path, base: &Path) -> Option<PathBuf > {
 
 ## internal
@@ -146,7 +117,6 @@ FnCollector::fn visit_item (& mut self, i:&'ast Item) {
 FnCollector::fn push_free_fn (& mut self, f: &ItemFn) {
 FnCollector::fn push_impl (& mut self, imp: &ItemImpl) {
 fn project_root_from_index (index_path: &Path) -> PathBuf {
-fn norm_sig (sig: &syn::Signature) -> String {
 fn resolve_path (root: &Path, p: &str) -> PathBuf {
 fn to_rel (root: &Path, p: &Path) -> PathBuf {
 fn normalize_token_string (s: &str) -> String {
@@ -183,6 +153,25 @@ fn skim_rust_symbols () {
 fn skim_python_symbols () {
 fn skim_ts_symbols () {
 fn dedup_preserves_first () {
+
+# src/index_v3.rs
+
+## public
+
+fn build_index_v3 (index_path: &Path, project_root: &Path, out_path: &Path) -> Result<() > {
+
+## internal
+
+fn hex256 (data: impl AsRef<[u8] >) -> String {
+fn chunk_and_merkle (bytes: &[u8]) -> (Vec<Chunk>, String) {
+fn extract_rust_anchors (src: &str) -> Result<Vec<Anchor>> {
+fn struct_anchor (src: &str, s: ItemStruct) -> Result<Anchor > {
+fn enum_anchor (src: &str, e: ItemEnum) -> Result<Anchor > {
+fn impl_anchors (src: &str, i: ItemImpl) -> Result<Vec<Anchor>> {
+fn fn_anchor (src: &str, f: ItemFn) -> Result<Anchor > {
+fn fn_anchor_sig (src: &str, sig: &syn::Signature, is_pub: bool) -> Result<Anchor > {
+fn line_range (src: &str, start: usize, end: usize) -> Range {
+fn find_balanced_block (src: &str, kw: &str, ident: &str) -> Result<(usize, usize) > {
 
 # src/intent.rs
 
@@ -318,6 +307,7 @@ fn fallback_head () {
 ## public
 
 fn build_types_from_index (index_path: &Path, output_path: &Path) -> io::Result<() > {
+fn norm_tokens<T: quote::ToTokens>(t: T) -> String {
 fn diff_paths (path: &Path, base: &Path) -> Option<PathBuf > {
 
 ## internal
@@ -328,7 +318,6 @@ TypeCollector::fn visit_item (& mut self, i:&'ast Item) {
 TypeCollector::fn push_struct (& mut self, s: &ItemStruct) {
 TypeCollector::fn push_enum (& mut self, e: &ItemEnum) {
 fn render_attrs (attrs: &[Attribute]) -> Vec<String > {
-fn norm_tokens<T: quote::ToTokens>(t: T) -> String {
 fn normalize_token_string (s: &str) -> String {
 fn project_root_from_index (index_path: &Path) -> PathBuf {
 

@@ -15,3 +15,4 @@ pub mod map_view;
 pub mod commands;
 pub mod functions_view;
 pub mod custom_view;
+pub mod index_v3;

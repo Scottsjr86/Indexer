@@ -254,7 +254,7 @@ fn project_root_from_index(index_path: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-fn norm_sig(sig: &syn::Signature) -> String {
+pub fn norm_sig(sig: &syn::Signature) -> String {
     let s = quote::quote!(#sig).to_string();
     normalize_token_string(&s)
 }

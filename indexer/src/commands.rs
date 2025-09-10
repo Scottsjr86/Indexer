@@ -12,6 +12,7 @@ use crate::{
     functions_view,
     map_view,
     scan,
+    index_v3,
     types_view,
     util,
 };
@@ -45,7 +46,7 @@ pub fn run_cli() -> Result<()> {
         "types" => generate_types(),
         "functions" => generate_functions(),
         "chunk" => chunk_index(args.get(2).map(|s| s.as_str())),
-        // Also support: `indexer help <cmd>`
+        "v3" | "emit-v3" => emit_v3(),
         "help" => {
             let sub = args.get(2).map(|s| s.as_str());
             print_help_dispatch(sub)
@@ -190,6 +191,13 @@ fn index_root(is_reindex: bool) -> Result<()> {
         .context("chunking index")?;
     println!("Paste chunks written to {}", p.chunks_dir.display());
 
+    // V3 (LLM-CODE-INDEX pack)
+    let out_v3 = p.index_dir.join("index_v3.json");
+    index_v3::build_index_v3(&p.index_file, &p.cwd, &out_v3)
+        .context("emitting LLM-CODE-INDEX/v3")?;
+    println!("LLM-CODE-INDEX/v3 written to {}", out_v3.display());
+
+
     Ok(())
 }
 
@@ -300,6 +308,16 @@ fn ensure_index_exists(p: &Path) -> Result<()> {
     ))
 }
 
+fn emit_v3() -> Result<()> {
+    let p = resolve_paths()?;
+    ensure_index_exists(&p.index_file)?;
+    let out = p.index_dir.join("index_v3.json");
+    index_v3::build_index_v3(&p.index_file, &p.cwd, &out)
+        .context("emitting LLM-CODE-INDEX/v3")?;
+    println!("LLM-CODE-INDEX/v3 written to {}", out.display());
+    Ok(())
+}
+
 /*───────────────────────────────────────────────────────────────────────────*
  * Help system
  *───────────────────────────────────────────────────────────────────────────*/
@@ -338,6 +356,10 @@ fn print_help_dispatch(sub: Option<&str>) -> Result<()> {
             print_help_chunk();
             Ok(())
         }
+        Some("v3") | Some("emit-v3") => {
+            print_help_v3();
+            Ok(())
+        }
         Some(cmd) if is_help_flag(cmd) => {
             print_help_main();
             Ok(())
@@ -364,6 +386,7 @@ GLOBAL COMMANDS:
     types        Rebuild types markdown (structs, enums) grouped by file
     functions    Rebuild functions markdown (public/internal/tests) grouped by file
     chunk        Split index into pasteable chunks with token caps
+    v3           Emit LLM-CODE-INDEX/v3 JSON (.gpt_index/index_v3.json)
 
 GLOBAL FLAGS:
     -h, --help       Show this help or help for a subcommand
@@ -375,6 +398,7 @@ EXAMPLES:
     indexer chunk --help
     indexer init
     indexer chunk --cap=12000
+    indexer v3
 "#
     );
 }
@@ -494,6 +518,25 @@ EXAMPLES:
 
 REQUIRES:
     A prior `indexer init` or `indexer reindex`
+"#
+    );
+}
+
+fn print_help_v3() {
+    println!(
+        r#"indexer v3
+
+DESCRIPTION:
+    Emit a self-sufficient LLM-CODE-INDEX/v3 pack with:
+      - file sha256 + Merkle chunking
+      - per-anchor verbatim slices (base64) + slice sha256
+      - normalized schemas & signatures
+
+USAGE:
+    indexer v3
+
+REQUIRES:
+    A prior `indexer init` or `indexer reindex` (for .jsonl existence)
 "#
     );
 }

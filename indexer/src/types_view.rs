@@ -219,7 +219,7 @@ fn render_attrs(attrs: &[Attribute]) -> Vec<String> {
     }).collect()
 }
 
-fn norm_tokens<T: quote::ToTokens>(t: T) -> String {
+pub fn norm_tokens<T: quote::ToTokens>(t: T) -> String {
     let s = t.into_token_stream().to_string();
     normalize_token_string(&s)
 }

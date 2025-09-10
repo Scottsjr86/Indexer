@@ -29,24 +29,6 @@ struct Part {
   token_estimate: usize,
 }
 
-# src/commands.rs
-
-struct ResolvedPaths {
-  cwd: PathBuf,
-  dir_name: String,
-#[allow (dead_code)]
-  index_dir: PathBuf,
-  maps_dir: PathBuf,
-  types_dir: PathBuf,
-  functions_dir: PathBuf,
-  chunks_dir: PathBuf,
-#[allow (dead_code)]
-  indexes_dir: PathBuf,
-  history_full: PathBuf,
-  history_diff: PathBuf,
-  index_file: PathBuf,
-}
-
 # src/custom_view.rs
 
 struct FileIntentEntryMini {
@@ -155,6 +137,88 @@ pub struct Groups {
   pub public: Vec<String >,
   pub internal: Vec<String >,
   pub tests: Vec<String >,
+}
+
+# src/index_v3.rs
+
+pub struct IndexPack {
+  format: & 'static str,
+  version: & 'static str,
+  hash_algo: & 'static str,
+  pack_id: String,
+  created_utc: String,
+  lang: LangMeta,
+  rules: Rules,
+  files: Vec<FileEntry >,
+}
+
+struct LangMeta {
+  primary: & 'static str,
+  dialect: & 'static str,
+}
+
+struct Rules {
+  mode: & 'static str,
+  patch_contract: PatchContract,
+}
+
+struct PatchContract {
+  diff_format: & 'static str,
+  limit_scope_to_verified_anchors: bool,
+}
+
+struct FileEntry {
+  path: String,
+  language: String,
+  size_bytes: usize,
+  line_count: usize,
+  encoding: & 'static str,
+  eol: & 'static str,
+  file_sha256: String,
+  chunks: ChunkSet,
+  anchors: Vec<Anchor >,
+}
+
+struct ChunkSet {
+  chunk_size_bytes: usize,
+  merkle_root: String,
+  list: Vec<Chunk >,
+}
+
+struct Chunk {
+  index: usize,
+  offset: usize,
+  length: usize,
+  sha256: String,
+}
+
+struct Anchor {
+  kind: & 'static str,
+  name: String,
+  visibility: String,
+  signature: Option<String >,
+  range: Range,
+  slice_sha256: String,
+  verbatim_b64: String,
+  schema: Option<Schema >,
+}
+
+struct Range {
+  start_line: usize,
+  end_line: usize,
+}
+
+struct Schema {
+  fields: Option<Vec<Field>>,
+  variants: Option<Vec<String>>,
+  params: Option<Vec<(String, String)>>,
+  returns: Option<String >,
+}
+
+struct Field {
+  name: String,
+  ty: String,
+  public: bool,
 }
 
 # src/map_view.rs
