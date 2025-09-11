@@ -169,9 +169,19 @@ fn struct_anchor (src: &str, s: ItemStruct) -> Result<Anchor > {
 fn enum_anchor (src: &str, e: ItemEnum) -> Result<Anchor > {
 fn impl_anchors (src: &str, i: ItemImpl) -> Result<Vec<Anchor>> {
 fn fn_anchor (src: &str, f: ItemFn) -> Result<Anchor > {
+fn fn_anchor_from_impl (src: &str, f: &ImplItemFn) -> Result<Anchor > {
 fn fn_anchor_sig (src: &str, sig: &syn::Signature, is_pub: bool) -> Result<Anchor > {
+fn span_start_offset (src: &str, sp: Span) -> Option<usize > {
+fn offset_from_line_col (src: &str, line_1based: usize, col_0based: usize) -> usize {
+fn find_body_bounds_from (src: &str, start_from: usize) -> Result<(usize, usize) > {
 fn line_range (src: &str, start: usize, end: usize) -> Range {
 fn find_balanced_block (src: &str, kw: &str, ident: &str) -> Result<(usize, usize) > {
+fn is_ident_start (b: u8) -> bool {
+fn is_ident_continue (b: u8) -> bool {
+fn is_token_at (bytes: &[u8], i: usize, kw: &str) -> bool {
+fn parse_ident (bytes: &[u8], mut j: usize) -> (Option<String>, usize) {
+fn skip_ws_and_comments (bytes: &[u8], mut j: usize) -> usize {
+fn consume_balanced_block (bytes: &[u8], start_brace: usize) -> Result<(usize, usize) > {
 
 # src/intent.rs
 

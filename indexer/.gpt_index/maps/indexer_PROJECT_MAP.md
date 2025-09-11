@@ -21,7 +21,7 @@ _Legend: grouped by top-level dir • each line = `rel/path [lang] — summary` 
 - `file_intent_entry.rs` [rust] _[rust, dir:src, ext:rs]_ — File-level intent record: what is this file, what does it export, and how should GPT treat it?
 - `functions_view.rs` [rust] _[rust, dir:src, ext:rs]_ — Filesystem / IO utilities.
 - `helpers.rs` [rust] _[rust, dir:src, ext:rs]_ — Formatting and shared helper utilities.
-- `index_v3.rs` [rust] _[rust, dir:src, ext:rs]_ — use std::{fs, path::{Path}};
+- `index_v3.rs` [rust] _[rust, dir:src, ext:rs]_ — use std::{fs, path::{Path}, env};
 - `intent.rs` [rust] _[rust, dir:src, ext:rs]_ — Intent classifier: offline file purpose inference.
 - `lib.rs` [rust] _[rust, dir:src, ext:rs, crate:lib]_ — Root library file for this Rust crate.
 - `main.rs` [rust] _[rust, dir:src, ext:rs, cli, crate:bin]_ — Entrypoint for this Rust binary.
@@ -44,7 +44,7 @@ _Legend: grouped by top-level dir • each line = `rel/path [lang] — summary` 
     - `file_intent_entry.rs` — rust • 14 KB • File-level intent record: what is this file, what does it export, and how should GPT treat it?
     - `functions_view.rs` — rust • 9.9 KB • Filesystem / IO utilities.
     - `helpers.rs` — rust • 13 KB • Formatting and shared helper utilities.
-    - `index_v3.rs` — rust • 9.1 KB • use std::{fs, path::{Path}};
+    - `index_v3.rs` — rust • 24 KB • use std::{fs, path::{Path}, env};
     - `intent.rs` — rust • 11 KB • Intent classifier: offline file purpose inference.
     - `lib.rs` — rust • 331 B • Root library file for this Rust crate.
     - `main.rs` — rust • 97 B • Entrypoint for this Rust binary.
@@ -53,4 +53,4 @@ _Legend: grouped by top-level dir • each line = `rel/path [lang] — summary` 
     - `snippet.rs` — rust • 14 KB • PASTE emitter: model-optimized prompt pack.
     - `types_view.rs` — rust • 9.3 KB • Filesystem / IO utilities.
     - `util.rs` — rust • 13 KB • Utility helpers for the crate.
-  - `Cargo.toml` — toml • 394 B • Cargo manifest / workspace configuration.
+  - `Cargo.toml` — toml • 463 B • Cargo manifest / workspace configuration.
